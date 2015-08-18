@@ -760,11 +760,20 @@ public:
   {
     mOperator.clearWaypoints();
     mOperator.addWaypoint(mHubo->getPositions(mOperatorIndices));
-    const HuboPath::Trajectory& traj = mOperator.getCurrentTrajectory();
+    HuboPath::Trajectory traj = mOperator.getCurrentTrajectory();
 
     traj.interpolate();
 
+    size_t length = traj.size();
+    for(size_t i=0; i < length; ++i)
+    {
+      Eigen::VectorXd q(mHubo->getNumDofs());
+      for(size_t j=0; j < 6; ++j)
+        q[j] = mHubo->getDof(j)->getPosition()*(double)(i+1)/(double)(length);
 
+      for(size_t j=6; j < mHubo->getNumDofs(); ++j)
+        q[j] = traj[i].references[j];
+    }
 
   }
 
