@@ -765,16 +765,36 @@ public:
     traj.interpolate();
 
     size_t length = traj.size();
+    mTrajectory.clear();
     for(size_t i=0; i < length; ++i)
     {
       Eigen::VectorXd q(mHubo->getNumDofs());
       for(size_t j=0; j < 6; ++j)
         q[j] = mHubo->getDof(j)->getPosition()*(double)(i+1)/(double)(length);
 
+      const IndexArray& indexMap = mOperator.getIndexMap();
       for(size_t j=6; j < mHubo->getNumDofs(); ++j)
-        q[j] = traj[i].references[j];
+        q[j] = traj[i].references[indexMap[j-6]];
+
+      mTrajectory.push_back(q);
     }
 
+    for(size_t i=0; i < length; ++i)
+    {
+      mHubo->setPositions(mTrajectory[i]);
+      dart::collision::CollisionDetector* detector =
+          mWorld->getConstraintSolver()->getCollisionDetector();
+      detector->detectCollision(true, true);
+      if(detector->getNumContacts() > 0)
+        mTrajectoryValid = false;
+
+      if(!mTrajectoryValid)
+      {
+        std::cerr << "Trajectory invalid!" << std::endl;
+        mTrajectory.erase(mTrajectory.begin()+i, mTrajectory.end());
+        break;
+      }
+    }
   }
 
   void customPreRefresh() override
@@ -784,16 +804,21 @@ public:
       if(0 == mTrajectoryStep)
       {
         processTrajectory();
+        mTimer.setStartTick();
       }
 
-      if(mTrajectory.size() == mTrajectoryStep)
+
+
+      if(mTrajectory.size() <= mTrajectoryStep)
       {
         mPlayTrajectory = false;
         mTrajectoryStep = 0;
         return;
       }
 
-      ++mTrajectoryStep;
+      if(0 == mTrajectoryStep)
+        ++mTrajectoryStep;
+
       return;
     }
 
@@ -858,7 +883,7 @@ public:
       mHubo->getJoint(0)->setPositions(FreeJoint::convertToPositions(new_tf));
     }
 
-    bool solved = mHubo->getIK(true)->solve();
+    mHubo->getIK(true)->solve();
   }
 
   bool mAmplifyMovement;
@@ -895,7 +920,6 @@ protected:
   std::vector<Eigen::VectorXd> mTrajectory;
 
   osg::Timer mTimer;
-  osg::Timer_t mLastTick;
 };
 
 class InputHandler : public osgGA::GUIEventHandler
