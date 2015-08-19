@@ -181,6 +181,7 @@ public:
 
   HuboArmIK(InverseKinematics* _ik, const std::string& baseLinkName)
     : Analytical(_ik, "HuboArmIK_"+baseLinkName),
+      configured(false),
       mBaseLinkName(baseLinkName)
   {
     // Do nothing
@@ -460,6 +461,7 @@ public:
   /// baseLink should be Body_LHY or Body_RHY
   HuboLegIK(InverseKinematics* _ik, const std::string& baseLinkName)
     : Analytical(_ik, "HuboLegIK_"+baseLinkName),
+      configured(false),
       mBaseLinkName(baseLinkName)
   {
     // Do nothing
@@ -711,13 +713,13 @@ public:
     NUM_MOVE
   };
 
-  void setupActualHubo()
+  void setupClone(SkeletonPtr& cloneHubo, const Eigen::Vector4d& color)
   {
-    mActualHubo = mHubo->clone();
+    cloneHubo = mHubo->clone();
 
-    for(size_t i=0; i < mActualHubo->getNumBodyNodes(); ++i)
+    for(size_t i=0; i < cloneHubo->getNumBodyNodes(); ++i)
     {
-      BodyNode* bn = mActualHubo->getBodyNode(i);
+      BodyNode* bn = cloneHubo->getBodyNode(i);
       for(size_t j=0; j < bn->getNumVisualizationShapes(); ++j)
       {
         ShapePtr shape = bn->getVisualizationShape(j);
@@ -727,15 +729,16 @@ public:
         {
           MeshShapePtr newMesh = std::make_shared<MeshShape>(
                 mesh->getScale(), mesh->getMesh(), mesh->getMeshPath(), nullptr);
-          newMesh->setColor(Eigen::Vector4d(0.0, 0.67, 0.66, 0.3));
+          newMesh->setColor(color);
           newMesh->setColorMode(MeshShape::SHAPE_COLOR);
           bn->addVisualizationShape(newMesh);
         }
       }
     }
 
-    mWorld->addSkeleton(mActualHubo);
-    mWorld->getConstraintSolver()->getCollisionDetector()->removeSkeleton(mActualHubo);
+    cloneHubo->resetPositions();
+    mWorld->addSkeleton(cloneHubo);
+    mWorld->getConstraintSolver()->getCollisionDetector()->removeSkeleton(cloneHubo);
   }
 
   void refreshActualHubo()
@@ -757,6 +760,34 @@ public:
     }
 
     mActualHubo->setPositions(q);
+  }
+
+  void hideHubo(const SkeletonPtr& hubo, bool hide=true)
+  {
+    for(size_t i=0; i < hubo->getNumBodyNodes(); ++i)
+    {
+      BodyNode* bn = hubo->getBodyNode(i);
+      for(size_t j=0; j < bn->getNumVisualizationShapes(); ++j)
+        bn->getVisualizationShape(j)->setHidden(hide);
+    }
+  }
+
+  void toggleEndpointVisibility()
+  {
+    mViewEndpoint = !mViewEndpoint;
+
+    hideHubo(mHubo, mViewEndpoint);
+
+    if(mTrajectoryValid)
+    {
+      hideHubo(mEndpointHubo, !mViewEndpoint);
+      hideHubo(mFailedHubo, true);
+    }
+    else
+    {
+      hideHubo(mFailedHubo, !mViewEndpoint);
+      hideHubo(mEndpointHubo, true);
+    }
   }
 
 #define ADD_ADJACENT_PAIR( X, Y ) adjacentPairs.push_back(std::pair<std::string,std::string>( "Body_" #X , "Body_" #Y ));
@@ -791,7 +822,13 @@ public:
       l_hand(_robot->getEndEffector("l_hand")),
       r_hand(_robot->getEndEffector("r_hand"))
   {
-    setupActualHubo();
+    setupClone(mActualHubo, Eigen::Vector4d(0.0, 0.67, 0.66, 0.4));
+    setupClone(mEndpointHubo, Eigen::Vector4d(0.1, 0.1, 0.8, 0.8));
+    setupClone(mFailedHubo, Eigen::Vector4d(0.8, 0.1, 0.1, 0.8));
+    hideHubo(mEndpointHubo);
+    hideHubo(mFailedHubo);
+    mViewEndpoint = false;
+
     disableAdjacentPairs(mHubo);
 
     mMoveComponents.resize(NUM_MOVE, false);
@@ -872,6 +909,7 @@ public:
     }
 
     std::cout << "Checking for collisions" << std::endl;
+    mTrajectoryValid = true;
     for(size_t i=0; i < length; ++i)
     {
       mHubo->setPositions(mTrajectory[i]);
@@ -894,7 +932,8 @@ public:
       if(!mTrajectoryValid)
       {
         std::cerr << "Trajectory invalid!" << std::endl;
-        mTrajectory.erase(mTrajectory.begin()+i, mTrajectory.end());
+        if(i+1 < mTrajectory.size())
+          mTrajectory.erase(mTrajectory.begin()+i+1, mTrajectory.end());
         break;
       }
     }
@@ -902,6 +941,11 @@ public:
     if(mTrajectoryValid)
       std::cout << "Trajectory is valid" << std::endl;
 
+    if(!mTrajectory.empty())
+    {
+      mEndpointHubo->setPositions(mTrajectory.back());
+      mFailedHubo->setPositions(mTrajectory.back());
+    }
   }
 
   void customPreRefresh() override
@@ -910,13 +954,15 @@ public:
 
     if(mPlayTrajectory)
     {
+      double freq = mOperator.get_description().params.frequency;
+
       if(0 == mTrajectoryStep)
       {
-        std::cout << "Starting to play the trajectory" << std::endl;
+        std::cout << "Starting to play the trajectory ("
+                  << (double)(mTrajectory.size())/freq << "s)" << std::endl;
         mTimer.setStartTick();
       }
 
-      double freq = mOperator.get_description().params.frequency;
       double time = mTimer.time_s();
       mTrajectoryStep = ceil(time*freq);
 
@@ -1009,6 +1055,10 @@ protected:
   size_t iter;
 
   SkeletonPtr mActualHubo;
+  SkeletonPtr mEndpointHubo;
+  SkeletonPtr mFailedHubo;
+
+  bool mViewEndpoint;
 
   HuboPath::Operator mOperator;
   std::vector<size_t> mOperatorIndices;
@@ -1098,12 +1148,7 @@ public:
 
       if( ea.getKey() == osgGA::GUIEventAdapter::KEY_Tab )
       {
-        if(mViewer->isRecording())
-          mViewer->pauseRecording();
-        else
-          mViewer->record("/home/grey/dump");
-
-        mViewer->captureScreen("/home/grey/dump/capture.png");
+        mTeleop->toggleEndpointVisibility();
       }
 
       if( ea.getKey() == 'p' )
