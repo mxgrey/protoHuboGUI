@@ -743,10 +743,6 @@ public:
 
   void refreshActualHubo()
   {
-    Eigen::VectorXd q(mHubo->getNumDofs());
-    for(size_t j=0; j < 6; ++j)
-      q[j] = mHubo->getDof(j)->getPosition();
-
     const IndexArray& indexMap = mOperator.getIndexMap();
     for(size_t j=6; j < mHubo->getNumDofs(); ++j)
     {
@@ -756,10 +752,33 @@ public:
         continue;
       }
 
-      q[j] = mOperator.joints[indexMap[j-6]].position;
+      mActualHubo->setPosition(j, mOperator.joints[indexMap[j-6]].position);
     }
 
-    mActualHubo->setPositions(q);
+    JacobianNode* anchor;
+    JacobianNode* hook;
+
+    // Use this when Hubo is dangling from the hoist
+    anchor = mHubo->getBodyNode("Body_Torso");
+    hook = mActualHubo->getBodyNode("Body_Torso");
+
+    // TODO: Use this when Hubo is on the ground instead of dangling
+//    if(mHubo->getEndEffector(2)->getSupport()->isActive())
+//    {
+//      anchor = mHubo->getEndEffector("l_foot");
+//      hook = mActualHubo->getEndEffector("l_foot");
+//    }
+//    else
+//    {
+//      anchor = mHubo->getEndEffector("r_foot");
+//      hook = mActualHubo->getEndEffector("r_foot");
+//    }
+
+    FreeJoint* root = static_cast<FreeJoint*>(mActualHubo->getJoint(0));
+    Eigen::Isometry3d tf = anchor->getTransform() * root->getChildBodyNode()->getTransform(hook);
+
+    tf = root->getTransformFromParentBodyNode().inverse() * tf * root->getTransformFromParentBodyNode();
+    root->setPositionsStatic(FreeJoint::convertToPositions(tf));
   }
 
   void hideHubo(const SkeletonPtr& hubo, bool hide=true)
@@ -870,8 +889,17 @@ public:
   void playTrajectory()
   {
     processTrajectory();
+
     mTrajectoryStep = 0;
-    mPlayTrajectory = true;
+    if(mTrajectoryValid)
+    {
+      mPlayTrajectory = true;
+    }
+    else
+    {
+      toggleEndpointVisibility();
+      mPlayTrajectory = false;
+    }
   }
 
   void runTrajectory()
@@ -881,7 +909,15 @@ public:
       mOperator.sendNewTrajectory();
 
     mTrajectoryStep = 0;
-    mPlayTrajectory = true;
+    if(mTrajectoryValid)
+    {
+      mPlayTrajectory = true;
+    }
+    else
+    {
+      toggleEndpointVisibility();
+      mPlayTrajectory = false;
+    }
   }
 
   void processTrajectory()
@@ -908,6 +944,7 @@ public:
       mTrajectory.push_back(q);
     }
 
+    Eigen::VectorXd originalPositions = mHubo->getPositions();
     std::cout << "Checking for collisions" << std::endl;
     mTrajectoryValid = true;
     for(size_t i=0; i < length; ++i)
@@ -937,6 +974,7 @@ public:
         break;
       }
     }
+    mHubo->setPositions(originalPositions);
 
     if(mTrajectoryValid)
       std::cout << "Trajectory is valid" << std::endl;
@@ -950,10 +988,9 @@ public:
 
   void customPreRefresh() override
   {
-    refreshActualHubo();
-
     if(mPlayTrajectory)
     {
+      refreshActualHubo();
       double freq = mOperator.get_description().params.frequency;
 
       if(0 == mTrajectoryStep)
@@ -1045,6 +1082,8 @@ public:
     }
 
     mHubo->getIK(true)->solve();
+
+    refreshActualHubo();
   }
 
   bool mAmplifyMovement;
@@ -1362,6 +1401,9 @@ SkeletonPtr createHubo()
       --i;
     }
   }
+
+  for(size_t i=0; i < hubo->getNumBodyNodes(); ++i)
+    std::cout << hubo->getBodyNode(i)->getName() << std::endl;
 
   return hubo;
 }
