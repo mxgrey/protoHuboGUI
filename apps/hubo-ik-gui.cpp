@@ -179,27 +179,16 @@ class HuboArmIK : public InverseKinematics::Analytical
 {
 public:
 
-  HuboArmIK(InverseKinematics* _ik, BodyNode* baseLink)
-    : Analytical(_ik, "HuboArmIK_"+baseLink->getName()),
-      mBaseLink(BodyNodePtr(baseLink))
+  HuboArmIK(InverseKinematics* _ik, const std::string& baseLinkName)
+    : Analytical(_ik, "HuboArmIK_"+baseLinkName),
+      mBaseLinkName(baseLinkName)
   {
-    configure();
+    // Do nothing
   }
 
   std::unique_ptr<GradientMethod> clone(InverseKinematics* _newIK) const override
   {
-    BodyNode* base = mBaseLink.lock();
-    if(nullptr == base)
-    {
-      dterr << "[HuboArmIK::clone] Could not clone IK because its base link "
-            << "can no longer be referenced\n";
-      assert(false);
-      return nullptr;
-    }
-
-    return std::unique_ptr<GradientMethod>(
-          new HuboArmIK(_newIK, _newIK->getNode()->getSkeleton()->getBodyNode(
-                          base->getName())));
+    return std::unique_ptr<GradientMethod>(new HuboArmIK(_newIK, mBaseLinkName));
   }
 
   const std::vector<Solution>& computeSolutions(
@@ -210,10 +199,15 @@ public:
 
     if(!configured)
     {
-      dtwarn << "[HuboArmIK::computeSolutions] This analytical IK was not able "
-             << "to configure properly, so it will not be able to compute "
-             << "solutions\n";
-      return mSolutions;
+      configure();
+
+      if(!configured)
+      {
+        dtwarn << "[HuboArmIK::computeSolutions] This analytical IK was not able "
+               << "to configure properly, so it will not be able to compute "
+               << "solutions\n";
+        return mSolutions;
+      }
     }
 
     const BodyNodePtr& base = mBaseLink.lock();
@@ -349,6 +343,9 @@ public:
 
   const std::vector<size_t>& getDofs() const override
   {
+    if(!configured)
+      configure();
+
     return mDofs;
   }
 
@@ -356,15 +353,16 @@ public:
 
 protected:
 
-  void configure()
+  void configure() const
   {
     configured = false;
 
-    const BodyNodePtr& base = mBaseLink.lock();
+    mBaseLink = mIK->getNode()->getSkeleton()->getBodyNode(mBaseLinkName);
+
+    BodyNode* base = mBaseLink.lock();
     if(nullptr == base)
     {
-      dterr << "[HuboArmIK::configure] Cannot configure with a nullptr base "
-            << "link\n";
+      dterr << "[HuboArmIK::configure] base link is a nullptr\n";
       assert(false);
       return;
     }
@@ -438,19 +436,21 @@ protected:
     configured = true;
   }
 
-  bool configured;
+  mutable bool configured;
 
-  Eigen::Isometry3d shoulderTf;
-  Eigen::Isometry3d wristTfInv;
-  Eigen::Isometry3d mNodeOffsetTfInv;
-  double L3, L4, L5;
+  mutable Eigen::Isometry3d shoulderTf;
+  mutable Eigen::Isometry3d wristTfInv;
+  mutable Eigen::Isometry3d mNodeOffsetTfInv;
+  mutable double L3, L4, L5;
 
-  Eigen::Matrix<int, 8, 3> alterantives;
+  mutable Eigen::Matrix<int, 8, 3> alterantives;
 
-  std::vector<size_t> mDofs;
+  mutable std::vector<size_t> mDofs;
 
-  WeakBodyNodePtr mBaseLink;
-  JacobianNode* mWristEnd;
+  std::string mBaseLinkName;
+  mutable WeakBodyNodePtr mBaseLink;
+
+  mutable JacobianNode* mWristEnd;
 };
 
 class HuboLegIK : public InverseKinematics::Analytical
@@ -458,27 +458,16 @@ class HuboLegIK : public InverseKinematics::Analytical
 public:
 
   /// baseLink should be Body_LHY or Body_RHY
-  HuboLegIK(InverseKinematics* _ik, BodyNode* baseLink)
-    : Analytical(_ik, "HuboLegIK_"+baseLink->getName()),
-      mBaseLink(BodyNodePtr(baseLink))
+  HuboLegIK(InverseKinematics* _ik, const std::string& baseLinkName)
+    : Analytical(_ik, "HuboLegIK_"+baseLinkName),
+      mBaseLinkName(baseLinkName)
   {
-    configure();
+    // Do nothing
   }
 
   std::unique_ptr<GradientMethod> clone(InverseKinematics* _newIK) const override
   {
-    BodyNode* base = mBaseLink.lock();
-    if(nullptr == base)
-    {
-      dterr << "[HuboLegIK::clone] Could not clone IK because its base link "
-            << "can no longer be referenced\n";
-      assert(false);
-      return nullptr;
-    }
-
-    return std::unique_ptr<GradientMethod>(
-          new HuboLegIK(_newIK, _newIK->getNode()->getSkeleton()->getBodyNode(
-                          base->getName())));
+    return std::unique_ptr<GradientMethod>(new HuboLegIK(_newIK, mBaseLinkName));
   }
 
   const std::vector<Solution>& computeSolutions(
@@ -489,10 +478,15 @@ public:
 
     if(!configured)
     {
-      dtwarn << "[HuboLegIK::computeSolutions] This analytical IK was not able "
-            << "to configure properly, so it will not be able to compute "
-            << "solutions\n";
-      return mSolutions;
+      configure();
+
+      if(!configured)
+      {
+        dtwarn << "[HuboLegIK::computeSolutions] This analytical IK was not able "
+              << "to configure properly, so it will not be able to compute "
+              << "solutions\n";
+        return mSolutions;
+      }
     }
 
     const BodyNodePtr& base = mBaseLink.lock();
@@ -584,6 +578,9 @@ public:
 
   const std::vector<size_t>& getDofs() const override
   {
+    if(!configured)
+      configure();
+
     return mDofs;
   }
 
@@ -591,9 +588,11 @@ public:
 
 protected:
 
-  void configure()
+  void configure() const
   {
     configured = false;
+
+    mBaseLink = mIK->getNode()->getSkeleton()->getBodyNode(mBaseLinkName);
 
     BodyNode* base = mBaseLink.lock();
     if(nullptr == base)
@@ -678,17 +677,19 @@ protected:
     configured = true;
   }
 
-  double L4, L5, L6;
-  Eigen::Isometry3d waist;
-  Eigen::Isometry3d hipRotation;
-  Eigen::Isometry3d footTfInv;
-  Eigen::Matrix<int, 8, 3> alternatives;
+  mutable double L4, L5, L6;
+  mutable Eigen::Isometry3d waist;
+  mutable Eigen::Isometry3d hipRotation;
+  mutable Eigen::Isometry3d footTfInv;
+  mutable Eigen::Matrix<int, 8, 3> alternatives;
 
-  std::vector<size_t> mDofs;
+  mutable std::vector<size_t> mDofs;
 
-  bool configured;
+  mutable bool configured;
 
-  WeakBodyNodePtr mBaseLink;
+  std::string mBaseLinkName;
+
+  mutable WeakBodyNodePtr mBaseLink;
 
 };
 
@@ -710,6 +711,76 @@ public:
     NUM_MOVE
   };
 
+  void setupActualHubo()
+  {
+    mActualHubo = mHubo->clone();
+
+    for(size_t i=0; i < mActualHubo->getNumBodyNodes(); ++i)
+    {
+      BodyNode* bn = mActualHubo->getBodyNode(i);
+      for(size_t j=0; j < bn->getNumVisualizationShapes(); ++j)
+      {
+        ShapePtr shape = bn->getVisualizationShape(j);
+        bn->removeVisualizationShape(shape);
+
+        if(MeshShapePtr mesh = std::dynamic_pointer_cast<MeshShape>(shape))
+        {
+          MeshShapePtr newMesh = std::make_shared<MeshShape>(
+                mesh->getScale(), mesh->getMesh(), mesh->getMeshPath(), nullptr);
+          newMesh->setColor(Eigen::Vector4d(0.0, 0.67, 0.66, 0.3));
+          newMesh->setColorMode(MeshShape::SHAPE_COLOR);
+          bn->addVisualizationShape(newMesh);
+        }
+      }
+    }
+
+    mWorld->addSkeleton(mActualHubo);
+    mWorld->getConstraintSolver()->getCollisionDetector()->removeSkeleton(mActualHubo);
+  }
+
+  void refreshActualHubo()
+  {
+    Eigen::VectorXd q(mHubo->getNumDofs());
+    for(size_t j=0; j < 6; ++j)
+      q[j] = mHubo->getDof(j)->getPosition();
+
+    const IndexArray& indexMap = mOperator.getIndexMap();
+    for(size_t j=6; j < mHubo->getNumDofs(); ++j)
+    {
+      if(indexMap[j-6] == InvalidIndex)
+      {
+        std::cout << "InvalidIndex (" << j << ") " << mHubo->getDof(j)->getName() << std::endl;
+        continue;
+      }
+
+      q[j] = mOperator.joints[indexMap[j-6]].position;
+    }
+
+    mActualHubo->setPositions(q);
+  }
+
+#define ADD_ADJACENT_PAIR( X, Y ) adjacentPairs.push_back(std::pair<std::string,std::string>( "Body_" #X , "Body_" #Y ));
+
+  void disableAdjacentPairs(const SkeletonPtr& hubo)
+  {
+    dart::collision::CollisionDetector* detector =
+        mWorld->getConstraintSolver()->getCollisionDetector();
+
+    std::vector<std::pair<std::string, std::string>> adjacentPairs;
+    ADD_ADJACENT_PAIR(LHY, LHP);
+    ADD_ADJACENT_PAIR(LKP, LAR);
+    ADD_ADJACENT_PAIR(RHY, RHP);
+    ADD_ADJACENT_PAIR(RKP, RAR);
+    ADD_ADJACENT_PAIR(LSP, LSY);
+    ADD_ADJACENT_PAIR(RSP, RSY);
+
+    for(size_t i=0; i < adjacentPairs.size(); ++i)
+    {
+      detector->disablePair(hubo->getBodyNode(adjacentPairs[i].first),
+                            hubo->getBodyNode(adjacentPairs[i].second));
+    }
+  }
+
   TeleoperationWorld(WorldPtr _world, SkeletonPtr _robot)
     : osgDart::WorldNode(_world),
       mHubo(_robot),
@@ -720,6 +791,9 @@ public:
       l_hand(_robot->getEndEffector("l_hand")),
       r_hand(_robot->getEndEffector("r_hand"))
   {
+    setupActualHubo();
+    disableAdjacentPairs(mHubo);
+
     mMoveComponents.resize(NUM_MOVE, false);
     mAnyMovement = false;
     mAmplifyMovement = false;
@@ -756,6 +830,23 @@ public:
     }
   }
 
+  void playTrajectory()
+  {
+    processTrajectory();
+    mTrajectoryStep = 0;
+    mPlayTrajectory = true;
+  }
+
+  void runTrajectory()
+  {
+    processTrajectory();
+    if(mTrajectoryValid)
+      mOperator.sendNewTrajectory();
+
+    mTrajectoryStep = 0;
+    mPlayTrajectory = true;
+  }
+
   void processTrajectory()
   {
     mOperator.clearWaypoints();
@@ -763,6 +854,7 @@ public:
     HuboPath::Trajectory traj = mOperator.getCurrentTrajectory();
 
     traj.interpolate();
+    std::cout << "Raw traj size: " << traj.size() << std::endl;
 
     size_t length = traj.size();
     mTrajectory.clear();
@@ -770,7 +862,7 @@ public:
     {
       Eigen::VectorXd q(mHubo->getNumDofs());
       for(size_t j=0; j < 6; ++j)
-        q[j] = mHubo->getDof(j)->getPosition()*(double)(i+1)/(double)(length);
+        q[j] = mHubo->getDof(j)->getPosition();
 
       const IndexArray& indexMap = mOperator.getIndexMap();
       for(size_t j=6; j < mHubo->getNumDofs(); ++j)
@@ -779,14 +871,25 @@ public:
       mTrajectory.push_back(q);
     }
 
+    std::cout << "Checking for collisions" << std::endl;
     for(size_t i=0; i < length; ++i)
     {
       mHubo->setPositions(mTrajectory[i]);
       dart::collision::CollisionDetector* detector =
           mWorld->getConstraintSolver()->getCollisionDetector();
       detector->detectCollision(true, true);
-      if(detector->getNumContacts() > 0)
-        mTrajectoryValid = false;
+      for(size_t k=0; k < detector->getNumContacts(); ++k)
+      {
+        const dart::collision::Contact& contact = detector->getContact(k);
+        if(contact.bodyNode1.lock()->getSkeleton() == mHubo
+           && contact.bodyNode2.lock()->getSkeleton() == mHubo)
+        {
+          std::cerr << "Collision between '"
+                    << contact.bodyNode1.lock()->getName() << "' and '"
+                    << contact.bodyNode2.lock()->getName() << "'" << std::endl;
+          mTrajectoryValid = false;
+        }
+      }
 
       if(!mTrajectoryValid)
       {
@@ -795,26 +898,38 @@ public:
         break;
       }
     }
+
+    if(mTrajectoryValid)
+      std::cout << "Trajectory is valid" << std::endl;
+
   }
 
   void customPreRefresh() override
   {
+    refreshActualHubo();
+
     if(mPlayTrajectory)
     {
       if(0 == mTrajectoryStep)
       {
-        processTrajectory();
+        std::cout << "Starting to play the trajectory" << std::endl;
         mTimer.setStartTick();
       }
 
-
+      double freq = mOperator.get_description().params.frequency;
+      double time = mTimer.time_s();
+      mTrajectoryStep = ceil(time*freq);
 
       if(mTrajectory.size() <= mTrajectoryStep)
       {
+        std::cout << "finished playing trajectory (" << mTrajectoryStep
+                  << ":" << mTrajectory.size() << ")" << std::endl;
         mPlayTrajectory = false;
         mTrajectoryStep = 0;
         return;
       }
+
+      mHubo->setPositions(mTrajectory[mTrajectoryStep]);
 
       if(0 == mTrajectoryStep)
         ++mTrajectoryStep;
@@ -892,6 +1007,8 @@ protected:
 
   SkeletonPtr mHubo;
   size_t iter;
+
+  SkeletonPtr mActualHubo;
 
   HuboPath::Operator mOperator;
   std::vector<size_t> mOperatorIndices;
@@ -973,6 +1090,12 @@ public:
 
     if( osgGA::GUIEventAdapter::KEYDOWN == ea.getEventType() )
     {
+      if( ea.getKey() == ' ' )
+      {
+        mTeleop->playTrajectory();
+        return true;
+      }
+
       if( ea.getKey() == osgGA::GUIEventAdapter::KEY_Tab )
       {
         if(mViewer->isRecording())
@@ -1187,7 +1310,8 @@ SkeletonPtr createHubo()
   {
     BodyNode* bn = hubo->getBodyNode(i);
     if(bn->getName().substr(0, 7) == "Body_LF"
-       || bn->getName().substr(0, 7) == "Body_RF")
+       || bn->getName().substr(0, 7) == "Body_RF"
+       || bn->getName().substr(0, 7) == "Body_NK")
     {
       bn->remove();
       --i;
@@ -1251,8 +1375,7 @@ void setupEndEffectors(const SkeletonPtr& hubo)
   l_hand->getIK(true)->setTarget(lh_target);
   l_hand->getIK()->useWholeBody();
 
-  l_hand->getIK()->setGradientMethod<HuboArmIK>(
-        hubo->getBodyNode("Body_LSP"));
+  l_hand->getIK()->setGradientMethod<HuboArmIK>("Body_LSP");
 
   l_hand->getIK()->getAnalytical()->setExtraDofUtilization(
         IK::Analytical::PRE_ANALYTICAL);
@@ -1278,8 +1401,7 @@ void setupEndEffectors(const SkeletonPtr& hubo)
   r_hand->getIK(true)->setTarget(rh_target);
   r_hand->getIK()->useWholeBody();
 
-  r_hand->getIK()->setGradientMethod<HuboArmIK>(
-        hubo->getBodyNode("Body_RSP"));
+  r_hand->getIK()->setGradientMethod<HuboArmIK>("Body_RSP");
 
   r_hand->getIK()->getAnalytical()->setExtraDofUtilization(
         IK::Analytical::PRE_ANALYTICAL);
@@ -1327,8 +1449,7 @@ void setupEndEffectors(const SkeletonPtr& hubo)
   l_foot->getIK()->getErrorMethod().setAngularBounds(
         -angularBounds, angularBounds);
 
-  l_foot->getIK()->setGradientMethod<HuboLegIK>(
-        hubo->getBodyNode("Body_LHY"));
+  l_foot->getIK()->setGradientMethod<HuboLegIK>("Body_LHY");
 
   l_foot->getSupport(true)->setGeometry(foot_support);
   l_foot->getSupport()->setActive();
@@ -1350,8 +1471,7 @@ void setupEndEffectors(const SkeletonPtr& hubo)
   r_foot->getIK()->getErrorMethod().setAngularBounds(
         -angularBounds, angularBounds);
 
-  r_foot->getIK()->setGradientMethod<HuboLegIK>(
-        hubo->getBodyNode("Body_RHY"));
+  r_foot->getIK()->setGradientMethod<HuboLegIK>("Body_RHY");
 
   r_foot->getSupport(true)->setGeometry(foot_support);
   r_foot->getSupport()->setActive();
@@ -1374,8 +1494,7 @@ void setupEndEffectors(const SkeletonPtr& hubo)
 
   l_peg->getIK(true)->setTarget(lp_target);
 
-  l_peg->getIK()->setGradientMethod<HuboArmIK>(
-        hubo->getBodyNode("Body_LSP"));
+  l_peg->getIK()->setGradientMethod<HuboArmIK>("Body_LSP");
 
   l_peg->getIK()->getErrorMethod().setLinearBounds(
         -linearBounds, linearBounds);
@@ -1392,8 +1511,7 @@ void setupEndEffectors(const SkeletonPtr& hubo)
 
   r_peg->getIK(true)->setTarget(rp_target);
 
-  r_peg->getIK()->setGradientMethod<HuboArmIK>(
-        hubo->getBodyNode("Body_RSP"));
+  r_peg->getIK()->setGradientMethod<HuboArmIK>("Body_RSP");
 
   r_peg->getIK()->getErrorMethod().setLinearBounds(
         -linearBounds, linearBounds);
