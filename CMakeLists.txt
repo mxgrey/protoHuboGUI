@@ -54,3 +54,4 @@ foreach(app_src_file ${apps_source})
 endforeach(app_src_file)
 
 target_link_libraries(hubo-ik-gui dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES} boost_system assimp HuboCan)
+target_link_libraries(hubo-sim dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES} boost_system assimp HuboCan)

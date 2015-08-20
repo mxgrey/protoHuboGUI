@@ -744,6 +744,7 @@ public:
   void refreshActualHubo()
   {
     const IndexArray& indexMap = mOperator.getIndexMap();
+    mOperator.update(0, false);
     for(size_t j=6; j < mHubo->getNumDofs(); ++j)
     {
       if(indexMap[j-6] == InvalidIndex)
@@ -1005,8 +1006,7 @@ public:
 
       if(mTrajectory.size() <= mTrajectoryStep)
       {
-        std::cout << "finished playing trajectory (" << mTrajectoryStep
-                  << ":" << mTrajectory.size() << ")" << std::endl;
+        std::cout << "finished playing trajectory" << std::endl;
         mPlayTrajectory = false;
         mTrajectoryStep = 0;
         return;
@@ -1183,6 +1183,11 @@ public:
       {
         mTeleop->playTrajectory();
         return true;
+      }
+
+      if( ea.getKey() == osgGA::GUIEventAdapter::KEY_Return)
+      {
+        mTeleop->runTrajectory();
       }
 
       if( ea.getKey() == osgGA::GUIEventAdapter::KEY_Tab )
@@ -1401,9 +1406,6 @@ SkeletonPtr createHubo()
       --i;
     }
   }
-
-  for(size_t i=0; i < hubo->getNumBodyNodes(); ++i)
-    std::cout << hubo->getBodyNode(i)->getName() << std::endl;
 
   return hubo;
 }
