@@ -29,9 +29,14 @@
  *   POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <iostream>
+#include <fstream>
+
 #include <dart/dart.h>
 #include <osgDart/osgDart.h>
 #include <yaml-cpp/yaml.h>
+
+#include <HuboPath/Operator.hpp>
 
 using namespace dart::dynamics;
 using namespace dart::optimizer;
@@ -319,19 +324,19 @@ protected:
 typedef std::shared_ptr<BezierDependentFunc> BezierFuncPtr;
 typedef std::vector<BezierFuncPtr> BezierFuncArray;
 
+struct Term
+{
+  Term(size_t _index = INVALID_INDEX, double _coeff = 0.0)
+    : index(_index), coeff(_coeff) { }
+
+  size_t index;
+  double coeff;
+};
+
 class LinearCombo : public Function,
-                       public BezierDependentFunc
+                    public BezierDependentFunc
 {
 public:
-
-  struct Term
-  {
-    Term(size_t _index = INVALID_INDEX, double _coeff = 0.0)
-      : index(_index), coeff(_coeff) { }
-
-    size_t index;
-    double coeff;
-  };
 
   LinearCombo(const std::vector<Term>& terms,
               const Eigen::VectorXd& alphas)
@@ -370,6 +375,59 @@ protected:
   std::vector<Term> mTerms;
 
   Eigen::VectorXd mAlphas;
+};
+
+class SatisfyTau : public Function,
+                   public BezierDependentFunc
+{
+public:
+
+  SatisfyTau(const std::vector<Term>& p_terms_,
+             double p_plus_, double p_minus_)
+
+    : p_terms(p_terms_),
+      p_plus(p_plus_),
+      p_minus(p_minus_)
+  {
+    // Do nothing
+  }
+
+  double computeP(const Eigen::VectorXd& _x)
+  {
+    double p = 0;
+    for(const Term& term : p_terms)
+      p += term.coeff * _x[term.index];
+
+    return p;
+  }
+
+  double computeCost(const Eigen::VectorXd& _x)
+  {
+    double p = computeP(_x);
+    return (p - p_plus) - mTau*(p_minus - p_plus);
+  }
+
+  double eval(const Eigen::VectorXd& _x) override final
+  {
+    double cost = computeCost(_x);
+    return cost*cost;
+  }
+
+  void evalGradient(const Eigen::VectorXd& _x,
+                    Eigen::Map<Eigen::VectorXd> _grad) override final
+  {
+    _grad.setZero();
+    const double cost = computeCost(_x);
+    for(const Term& term : p_terms)
+      _grad[term.index] = 2 * term.coeff * cost;
+  }
+
+protected:
+
+  std::vector<Term> p_terms;
+
+  double p_plus;
+  double p_minus;
 };
 
 class EndEffectorConstraint : public Function,
@@ -473,31 +531,31 @@ Eigen::VectorXd make_alphas(Args... args)
 }
 
 void build_terms(const SkeletonPtr& /*hubo*/,
-                 std::vector<LinearCombo::Term>& /*terms*/)
+                 std::vector<Term>& /*terms*/)
 {
   // Terminate template recursion
 }
 
 template <typename ... Args>
-void build_terms(const SkeletonPtr& hubo, std::vector<LinearCombo::Term>& terms,
+void build_terms(const SkeletonPtr& hubo, std::vector<Term>& terms,
                  double coeff, const std::string& name, Args... args)
 {
-  terms.push_back(LinearCombo::Term(hubo->getDof(name)->getIndexInSkeleton(), coeff));
+  terms.push_back(Term(hubo->getDof(name)->getIndexInSkeleton(), coeff));
   build_terms(hubo, terms, args...);
 }
 
 template <typename ... Args>
-void build_terms(const SkeletonPtr& hubo, std::vector<LinearCombo::Term>& terms,
+void build_terms(const SkeletonPtr& hubo, std::vector<Term>& terms,
                  double coeff, size_t index, Args... args)
 {
-  terms.push_back(LinearCombo::Term(index, coeff));
+  terms.push_back(Term(index, coeff));
   build_terms(hubo, terms, args...);
 }
 
 template <typename ... Args>
-std::vector<LinearCombo::Term> make_terms(const SkeletonPtr& hubo, Args... args)
+std::vector<Term> make_terms(const SkeletonPtr& hubo, Args... args)
 {
-  std::vector<LinearCombo::Term> terms;
+  std::vector<Term> terms;
   build_terms(hubo, terms, args...);
   return terms;
 }
@@ -511,15 +569,16 @@ Eigen::VectorXd solve(const std::shared_ptr<Solver>& solver,
 
   if(!solver->solve())
   {
-    std::cerr << "Could not solve at tau = " << tau << std::endl;
+    std::cerr << "Could not solve at tau = " << tau << " in "
+              << solver->getNumMaxIterations() << " steps" << std::endl;
 
     const std::shared_ptr<Problem> problem = solver->getProblem();
     for(size_t i=0; i < problem->getNumEqConstraints(); ++i)
     {
       const FunctionPtr& f = problem->getEqConstraint(i);
       double cost = f->eval(problem->getOptimalSolution());
-      if(std::abs(cost) > 1e-8)
-        std::cerr << "Cost of (" << i << "): " << cost << std::endl;
+      if(std::abs(cost) > solver->getTolerance())
+        std::cerr << "Cost of (" << i+1 << "): " << cost << std::endl;
     }
   }
   else
@@ -563,6 +622,8 @@ public:
 //    positions[LSR] += 90.0*M_PI/180.0;
 //    positions[RSR] -= 90.0*M_PI/180.0;
 //    hubo->setPositions(mTrajectory[count]);
+
+    positions.head<6>().setZero();
     hubo->setPositions(positions);
     ++count;
     if(count >= mTrajectory.size())
@@ -624,9 +685,18 @@ double computeP(const SkeletonPtr& hubo, const std::string& st,
                      -hubo->getDof(st+"KP")->getPosition());
 }
 
+double computeP(const YAML::Node& params, double t, double pdot0, double vd)
+{
+  double p0 = params["p0"].as<double>();
+
+  double eps = 1.0;
+
+  return vd*t + p0 + ((1.0-exp(-eps*t))*pdot0 + (exp(-eps*t)-1.0)*vd)/eps;
+}
+
 std::vector<Eigen::VectorXd> setupAndSolveProblem(
     const SkeletonPtr& hubo, const std::string& file,
-    const std::string& st/*ance*/, const std::string& sw/*ing*/)
+    const std::string& st/*ance*/, const std::string& sw/*ing*/, double* pdot0, double* vd)
 {
   Eigen::VectorXd lastPositions = hubo->getPositions();
   hubo->resetPositions();
@@ -636,7 +706,6 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
   YAML::Node domain = config["domain"];
   YAML::Node params = st == "L"? domain[1] : domain[0];
-
   double p_plus = params["p"][1].as<double>();
   double p_minus = params["p"][0].as<double>();
 
@@ -676,7 +745,19 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   solver->setProblem(problem);
   BezierFuncArray bezierFuncs;
   Eigen::VectorXd alphas;
-  std::vector<LinearCombo::Term> terms;
+  std::vector<Term> terms;
+
+  Eigen::VectorXd lower(hubo->getNumDofs());
+  Eigen::VectorXd upper(hubo->getNumDofs());
+
+  for(size_t i=0; i < hubo->getNumDofs(); ++i)
+  {
+    lower[i] = hubo->getDof(i)->getPositionLowerLimit();
+    upper[i] = hubo->getDof(i)->getPositionUpperLimit();
+  }
+
+  problem->setLowerBounds(lower);
+  problem->setUpperBounds(upper);
 
   ADD_LINEAR_OUTPUT(1,  make_terms(hubo, 1.0, st+"KP"));
   ADD_LINEAR_OUTPUT(2,  make_terms(hubo, -1.0, st+"AP", -1.0, st+"KP", -1.0, st+"HP"));
@@ -686,7 +767,8 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   ADD_LINEAR_OUTPUT(6,  make_terms(hubo, 1.0, st+"SP"));
   ADD_LINEAR_OUTPUT(7,  make_terms(hubo, 1.0, st+"SR"));
   ADD_LINEAR_OUTPUT(8,  make_terms(hubo, 1.0, st+"SY"));
-  ADD_LINEAR_OUTPUT(9,  make_terms(hubo, 1.0, st+"EP"));
+//  ADD_LINEAR_OUTPUT(9,  make_terms(hubo, 1.0, st+"EP"));
+  ADD_LINEAR_OUTPUT(24,  make_terms(hubo, 1.0, st+"EP"));
   ADD_LINEAR_OUTPUT(10, make_terms(hubo, 1.0, st+"WY"));
   ADD_LINEAR_OUTPUT(11, make_terms(hubo, 1.0, st+"WP"));
   ADD_LINEAR_OUTPUT(12, make_terms(hubo, 1.0, st+"WR"));
@@ -694,19 +776,26 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   ADD_LINEAR_OUTPUT(14, make_terms(hubo, 1.0, sw+"SP"));
   ADD_LINEAR_OUTPUT(15, make_terms(hubo, 1.0, sw+"SR"));
   ADD_LINEAR_OUTPUT(16, make_terms(hubo, 1.0, sw+"SY"));
-  ADD_LINEAR_OUTPUT(17, make_terms(hubo, 1.0, sw+"EP"));
+//  ADD_LINEAR_OUTPUT(17, make_terms(hubo, 1.0, sw+"EP"));
+  ADD_LINEAR_OUTPUT(24, make_terms(hubo, 1.0, sw+"EP"));
   ADD_LINEAR_OUTPUT(18, make_terms(hubo, 1.0, sw+"WY"));
   ADD_LINEAR_OUTPUT(19, make_terms(hubo, 1.0, sw+"WP"));
   ADD_LINEAR_OUTPUT(20, make_terms(hubo, 1.0, sw+"WR"));
   ADD_LINEAR_OUTPUT(21, make_terms(hubo, 1.0, sw+"KP"));
 
-  BodyNode* knee = hubo->getBodyNode("Body_"+st+"KP");
-  double thighLength = std::abs(knee->getRelativeTransform().translation()[2]);
+//  BodyNode* knee = hubo->getBodyNode("Body_"+st+"KP");
+//  double thighLength = std::abs(knee->getRelativeTransform().translation()[2]);
+//  double thighLength = std::abs(knee->getTransform(knee->getParentBodyNode()->getParentBodyNode()->getParentBodyNode()).translation()[2]);
+  double hLength = 0.1401;
+  double thighLength = 0.3299;
 //  std::cout << "thigh: " << thighLength << std::endl;
-  BodyNode* ankle = hubo->getBodyNode("Body_"+st+"AP");
-  double calfLength = std::abs(ankle->getRelativeTransform().translation()[2]);
+//  BodyNode* ankle = hubo->getBodyNode("Body_"+st+"AP");
+//  double calfLength = std::abs(ankle->getRelativeTransform().translation()[2]);
+  double calfLength = 0.33;
+
 //  std::cout << "calf: " << calfLength << std::endl;
-  double legRatio = calfLength/(thighLength+calfLength);
+//  double legRatio = calfLength/(thighLength+calfLength);
+  double legRatio = calfLength/(thighLength+calfLength+hLength);
   ADD_LINEAR_OUTPUT(22, make_terms(hubo, -1.0, st+"AP", -1.0, st+"KP", -1.0, st+"HP",
                                    1.0, sw+"HP", legRatio, sw+"KP"));
 
@@ -714,6 +803,17 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
   ADD_EE_ORIENTATION_OUTPUT( 24, 25, 26, hubo->getBodyNode("Body_"+sw+"AR") );
 
+  std::cout << "thigh: " << thighLength << "\n" << "calf: " << calfLength << std::endl;
+
+  {
+    // Constraint #25
+    terms = make_terms(hubo, -calfLength, st+"AP", -thighLength, st+"AP", -thighLength, st+"KP");
+    std::shared_ptr<SatisfyTau> f = std::make_shared<SatisfyTau>(terms, p_plus, p_minus);
+    problem->addEqConstraint(f);
+    bezierFuncs.push_back(f);
+  }
+
+  // Constraint #26
   JacobianNode* support_foot = hubo->getBodyNode("Body_"+st+"AR");
   InverseKinematicsPtr support = InverseKinematics::create(support_foot);
   std::vector<size_t> allDofs;
@@ -727,7 +827,8 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   support->getGradientMethod().setComponentWiseClamp(std::numeric_limits<double>::infinity());
   problem->addEqConstraint(support->getProblem()->getEqConstraint(0));
 
-//  solver->setTolerance(1e-3);
+  solver->setNumMaxIterations(1000);
+  solver->setTolerance(1e-12);
 
 //  hubo->setPositions(q_plus);
   hubo->setPositions(lastPositions);
@@ -740,22 +841,48 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 //  double p_minus = computeP(hubo, st, thighLength, calfLength);
 
   hubo->setPositions(lastPositions);
-  double p = computeP(hubo, st, thighLength, calfLength);
+//  double p = computeP(hubo, st, thighLength, calfLength);
 
-  double tau = 0.0;
-//  double tau = (p - p_plus)/(p_minus - p_plus);
+//  double tau = 0.0;
 //  if(tau < 0)
 //  {
 //    std::cout << "clamping tau from " << tau << std::endl;
 //    tau = 0;
 //  }
-  std::cout << "p: " << p << " \t p_plus: " << p_plus << " \t p_minus: " << p_minus << std::endl;
-  std::cout << "tau: " << tau << std::endl;
-  while(tau <= 1.0)
+
+  double p0 = params["p0"].as<double>();
+  std::cout << "\n\n" << st << " Foot Trajectory (p0 " << p0 << ") :\n";
+  double time = 0.0;
+  double tau = 0.0;
+  double lastTau = 0.0;
+  do
   {
+    double p = computeP(params, time,
+                        pdot0==nullptr? params["pdot0"].as<double>() : *pdot0,
+                        vd==nullptr? params["v"].as<double>() : *vd);
+    tau = (p - p_plus)/(p_minus - p_plus);
+    if(tau > 1.0)
+    {
+      std::cout << "stopping" << std::endl;
+      break;
+    }
+
+//    std::cout << "p: " << p << " \t p_plus: " << p_plus << " \t p_minus: " << p_minus << std::endl;
     trajectory.push_back(solve(solver, bezierFuncs, tau));
-    tau += 5*hubo->getTimeStep();
-  }
+
+    double actualP = computeP(hubo, st, thighLength, calfLength);
+    double actualTau = (actualP - p_plus)/(p_minus - p_plus);
+
+    std::cout << "tau: " << tau << " \t actualTau: " << actualTau
+              << " \t p: " << p << " \t actualP: " << actualP << std::endl;
+
+    if(std::abs(tau-lastTau) < 1e-6)
+      break;
+
+    lastTau = tau;
+
+    time += hubo->getTimeStep();
+  } while(tau <= 1.0);
 
   trajectory.push_back(solve(solver, bezierFuncs, tau));
 
@@ -782,6 +909,17 @@ SkeletonPtr createHubo()
     }
   }
 
+  hubo->getDof("REP")->setPositionUpperLimit(0.0);
+  hubo->getDof("LEP")->setPositionUpperLimit(0.0);
+
+//  std::cout << "REP: " << hubo->getDof("REP")->getPositionLowerLimit()
+//            << " : " << hubo->getDof("REP")->getPositionUpperLimit() << std::endl;
+
+//  std::cout << "LEP: " << hubo->getDof("LEP")->getPositionLowerLimit()
+//            << " : " << hubo->getDof("LEP")->getPositionUpperLimit() << std::endl;
+
+  hubo->setTimeStep(1.0/200.0);
+
   return hubo;
 }
 
@@ -789,30 +927,150 @@ int main()
 {
   SkeletonPtr hubo = createHubo();
 
+  std::string file = "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
+
 //  std::vector<Eigen::VectorXd> trajectory =
 //      setupAndSolveProblem(hubo, "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml", "L", "R");
 //      setupAndSolveProblem(hubo, "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml", "R", "L");
 
-  std::vector<Eigen::VectorXd> leftStance =
-      setupAndSolveProblem(hubo, "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml", "L", "R");
+  double pdot0 = 0.0;
+  double vd = 0.0;
+  std::vector<Eigen::VectorXd> leftRamp =
+      setupAndSolveProblem(hubo, file, "L", "R", &pdot0, nullptr);
   std::vector<Eigen::VectorXd> rightStance =
-      setupAndSolveProblem(hubo, "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml", "R", "L");
+      setupAndSolveProblem(hubo, file, "R", "L", nullptr, nullptr);
+  std::vector<Eigen::VectorXd> leftStance =
+      setupAndSolveProblem(hubo, file, "L", "R", nullptr, nullptr);
+  std::vector<Eigen::VectorXd> rightRamp =
+      setupAndSolveProblem(hubo, file, "R", "L", nullptr, &vd);
+
 
   std::vector<Eigen::VectorXd> trajectory;
-  for(const Eigen::VectorXd& pos : leftStance)
-    trajectory.push_back(pos);
+//  for(const Eigen::VectorXd& pos : leftRamp)
+//    trajectory.push_back(pos);
+//  for(const Eigen::VectorXd& pos : rightStance)
+//    trajectory.push_back(pos);
+//  for(const Eigen::VectorXd& pos : leftStance)
+//    trajectory.push_back(pos);
+//  for(const Eigen::VectorXd& pos : rightRamp)
+//    trajectory.push_back(pos);
+
+  double ramp = 100.0;
+
+  trajectory.push_back(leftRamp.front());
+  for(size_t i=0; i < leftRamp.size()-1; ++i)
+  {
+    size_t numSamples = pow(ceil((double)(leftRamp.size()-i)/ramp),3);
+    const Eigen::VectorXd& p0 = leftRamp[i];
+    const Eigen::VectorXd& pf = leftRamp[i+1];
+    for(size_t j=1; j <= numSamples; ++j)
+    {
+      Eigen::VectorXd p = (double)(j)/(double)(numSamples)*(pf-p0) + p0;
+      trajectory.push_back(p);
+    }
+  }
+
+
   for(const Eigen::VectorXd& pos : rightStance)
     trajectory.push_back(pos);
+
+  for(const Eigen::VectorXd& pos : leftStance)
+    trajectory.push_back(pos);
+
+  trajectory.push_back(rightRamp.front());
+  for(size_t i=0; i < rightRamp.size()-1; ++i)
+  {
+    size_t numSamples = pow(ceil((double)(i+1)/ramp),3);
+    const Eigen::VectorXd& p0 = rightRamp[i];
+    const Eigen::VectorXd& pf = rightRamp[i+1];
+    for(size_t j=1; j <= numSamples; ++j)
+    {
+      Eigen::VectorXd p = (double)(j)/(double)(numSamples)*(pf-p0) + p0;
+      trajectory.push_back(p);
+    }
+  }
+
+
+//  std::ofstream file;
+//  file.open("/home/grey/dump/leftStanceTraj.dat", std::ofstream::out);
+//  for(size_t i=0; i < leftStance.size(); ++i)
+//  {
+//    const Eigen::VectorXd& pos = leftStance[i];
+//    for(int j=0; j < pos.size(); ++j)
+//      file << pos[j] << "\t";
+//    file << "\n";
+//  }
+//  file.close();
+
+//  file.open("/home/grey/dump/rightStanceTraj.dat", std::ofstream::out);
+//  for(size_t i=0; i < rightStance.size(); ++i)
+//  {
+//    const Eigen::VectorXd& pos = rightStance[i];
+//    for(int j=0; j < pos.size(); ++j)
+//      file << pos[j] << "\t";
+//    file << "\n";
+//  }
+//  file.close();
 
 
   dart::simulation::WorldPtr world = std::make_shared<dart::simulation::World>();
   world->addSkeleton(hubo);
   osg::ref_ptr<TrajectoryDisplayWorld> display = new TrajectoryDisplayWorld(world, trajectory);
 
-  osgDart::Viewer viewer;
-  viewer.addWorldNode(display);
-  viewer.allowSimulation(false);
-  viewer.record("/home/grey/dump/");
+//  bool operate = false;
+  bool operate = true;
 
-  viewer.run();
+  if(operate)
+  {
+    HuboPath::Operator mOperator;
+    std::vector<std::string> indexNames;
+    std::vector<size_t> mOperatorIndices;
+    for(size_t i=6; i < hubo->getNumDofs(); ++i)
+    {
+      DegreeOfFreedom* dof = hubo->getDof(i);
+      mOperatorIndices.push_back(i);
+      indexNames.push_back(dof->getName());
+    }
+    mOperator.setJointIndices(indexNames);
+
+    mOperator.addWaypoint(hubo->getPositions(mOperatorIndices));
+    mOperator.setInterpolationMode(HUBO_PATH_SPLINE);
+
+    mOperator.sendNewTrajectory();
+
+    mOperator.clearWaypoints();
+
+    sleep(2);
+
+    mOperator.update();
+    hubo_player_state_t player = mOperator.getPlayerState();
+    std::cout << "last traj size: " << player.trajectory_size << std::endl;
+
+    while(player.trajectory_size == 0 || player.current_index < player.trajectory_size - 1)
+    {
+      mOperator.update();
+      player = mOperator.getPlayerState();
+    }
+
+    for(size_t i=0; i < trajectory.size(); ++i)
+    {
+      hubo->setPositions(trajectory[i]);
+      mOperator.addWaypoint(hubo->getPositions(mOperatorIndices));
+    }
+
+    mOperator.setInterpolationMode(HUBO_PATH_RAW);
+
+    mOperator.sendNewTrajectory();
+  }
+  else
+  {
+    osgDart::Viewer viewer;
+    viewer.addWorldNode(display);
+    viewer.allowSimulation(false);
+//    viewer.record("/home/grey/dump/");
+
+    viewer.run();
+  }
+
+  std::cout << "Full trajectory size: " << trajectory.size() << std::endl;
 }

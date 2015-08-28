@@ -1685,7 +1685,6 @@ int main()
   setupEndEffectors(hubo);
 
   world->addSkeleton(hubo);
-//  world->addSkeleton(createGround());
 
   setupWholeBodySolver(hubo);
 
