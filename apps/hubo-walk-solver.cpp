@@ -981,7 +981,7 @@ int main()
   std::string yaml = "/home/grey/projects/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
 
   bool loadfile = false;
-  loadfile = true;
+//  loadfile = true;
 
   std::string filename = "/home/grey/projects/protoHuboGUI/trajectory.dat";
 
@@ -1009,31 +1009,31 @@ int main()
   {
     double pdot0 = 0.0;
     double vd = 0.0;
-    std::vector<Eigen::VectorXd> leftRamp =
-        setupAndSolveProblem(hubo, yaml, "L", "R", &pdot0, nullptr);
+//    std::vector<Eigen::VectorXd> leftRamp =
+//        setupAndSolveProblem(hubo, yaml, "L", "R", &pdot0, nullptr);
     std::vector<Eigen::VectorXd> rightStance =
         setupAndSolveProblem(hubo, yaml, "R", "L", nullptr, nullptr);
     std::vector<Eigen::VectorXd> leftStance =
         setupAndSolveProblem(hubo, yaml, "L", "R", nullptr, nullptr);
-    std::vector<Eigen::VectorXd> rightRamp =
-        setupAndSolveProblem(hubo, yaml, "R", "L", nullptr, &vd);
+//    std::vector<Eigen::VectorXd> rightRamp =
+//        setupAndSolveProblem(hubo, yaml, "R", "L", nullptr, &vd);
 
 
-    for(const Eigen::VectorXd& pos : leftRamp)
-      raw_trajectory.push_back(pos);
+//    for(const Eigen::VectorXd& pos : leftRamp)
+//      raw_trajectory.push_back(pos);
     for(const Eigen::VectorXd& pos : rightStance)
       raw_trajectory.push_back(pos);
     for(const Eigen::VectorXd& pos : leftStance)
       raw_trajectory.push_back(pos);
-    for(const Eigen::VectorXd& pos : rightRamp)
-      raw_trajectory.push_back(pos);
+//    for(const Eigen::VectorXd& pos : rightRamp)
+//      raw_trajectory.push_back(pos);
 
     dumpTrajectory(raw_trajectory, filename);
   }
 
 
   bool operate = false;
-//  operate = true;
+  operate = true;
 
   if(operate)
   {
@@ -1050,22 +1050,22 @@ int main()
     }
     mOperator.setJointIndices(indexNames);
 
-    mOperator.addWaypoint(hubo->getPositions(mOperatorIndices));
-    mOperator.setInterpolationMode(HUBO_PATH_SPLINE);
+//    mOperator.addWaypoint(hubo->getPositions(mOperatorIndices));
+//    mOperator.setInterpolationMode(HUBO_PATH_SPLINE);
 
-    mOperator.sendNewTrajectory();
+//    mOperator.sendNewTrajectory();
 
-    mOperator.clearWaypoints();
+//    mOperator.clearWaypoints();
 
-    sleep(10);
+//    sleep(10);
 
-    mOperator.update();
-    hubo_player_state_t player = mOperator.getPlayerState();
-    while(player.trajectory_size == 0 || player.current_index < player.trajectory_size - 1)
-    {
-      mOperator.update();
-      player = mOperator.getPlayerState();
-    }
+//    mOperator.update();
+//    hubo_player_state_t player = mOperator.getPlayerState();
+//    while(player.trajectory_size == 0 || player.current_index < player.trajectory_size - 1)
+//    {
+//      mOperator.update();
+//      player = mOperator.getPlayerState();
+//    }
 
 
     for(size_t i=0; i < raw_trajectory.size(); ++i)
@@ -1076,6 +1076,15 @@ int main()
 
     mOperator.setInterpolationMode(HUBO_PATH_RAW);
 
+    HuboPath::Trajectory traj = mOperator.getCurrentTrajectory();
+    traj.elements.erase(traj.elements.begin());
+    if(!traj.check_limits())
+      std::cout << "Limits violated" << std::endl;
+    else
+      std::cout << "Limits are okay" << std::endl;
+
+
+    std::cout << "trajectory size: " << mOperator.getWaypoints().size() << std::endl;
     mOperator.sendNewTrajectory();
   }
   else

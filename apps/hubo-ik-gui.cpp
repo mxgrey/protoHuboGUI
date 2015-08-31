@@ -34,11 +34,13 @@
  *   POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <iostream>
+#include <fstream>
+
 #include <dart/dart.h>
 #include <osgDart/osgDart.h>
 #include <HuboPath/Operator.hpp>
 #include <osg/Timer>
-
 
 using namespace dart::dynamics;
 using namespace dart::simulation;
@@ -869,6 +871,8 @@ public:
       indexNames.push_back(dof->getName());
     }
     mOperator.setJointIndices(indexNames);
+
+    solve = true;
   }
 
   void setMovement(const std::vector<bool>& moveComponents)
@@ -901,6 +905,31 @@ public:
       toggleEndpointVisibility();
       mPlayTrajectory = false;
     }
+  }
+
+  void loadTrajectory()
+  {
+    std::string filename = "/home/grey/projects/protoHuboGUI/trajectory.dat";
+
+    std::vector<Eigen::VectorXd> raw_trajectory;
+    std::ifstream file;
+    file.open(filename);
+    if(file.is_open())
+    {
+      raw_trajectory.push_back(Eigen::VectorXd(mHubo->getNumDofs()));
+      Eigen::VectorXd& q = raw_trajectory.back();
+      for(size_t i=0; i < mHubo->getNumDofs(); ++i)
+        file >> q[i];
+    }
+    else
+    {
+      std::cerr << "Could not open file: " << filename << std::endl;
+      return;
+    }
+
+    raw_trajectory[0].head<6>() = mHubo->getPositions().head<6>();
+    solve = false;
+    mHubo->setPositions(raw_trajectory[0]);
   }
 
   void runTrajectory()
@@ -1081,7 +1110,8 @@ public:
       mHubo->getJoint(0)->setPositions(FreeJoint::convertToPositions(new_tf));
     }
 
-    mHubo->getIK(true)->solve();
+    if(solve)
+      mHubo->getIK(true)->solve();
 
     refreshActualHubo();
   }
@@ -1126,6 +1156,8 @@ protected:
   std::vector<Eigen::VectorXd> mTrajectory;
 
   osg::Timer mTimer;
+
+  bool solve;
 };
 
 class InputHandler : public osgGA::GUIEventHandler
@@ -1190,9 +1222,16 @@ public:
         mTeleop->runTrajectory();
       }
 
-      if( ea.getKey() == osgGA::GUIEventAdapter::KEY_Tab )
+      if( ea.getKey() == '`' )
       {
         mTeleop->toggleEndpointVisibility();
+        return true;
+      }
+
+      if( ea.getKey() == osgGA::GUIEventAdapter::KEY_Tab )
+      {
+        mTeleop->loadTrajectory();
+        return true;
       }
 
       if( ea.getKey() == 'p' )
@@ -1698,9 +1737,9 @@ int main()
 
   viewer.addEventHandler(new InputHandler(&viewer, node, hubo, world));
 
-  double display_elevation = 0.05;
-  viewer.addAttachment(new osgDart::SupportPolygonVisual(
-                         hubo, display_elevation));
+//  double display_elevation = 0.05;
+//  viewer.addAttachment(new osgDart::SupportPolygonVisual(
+//                         hubo, display_elevation));
 
   std::cout << viewer.getInstructions() << std::endl;
 

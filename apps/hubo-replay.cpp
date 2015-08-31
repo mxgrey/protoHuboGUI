@@ -54,7 +54,7 @@ public:
     double height = mHubo->getPosition(5);
     mHubo->setPositions(mTrajectory[0]);
     mHubo->setPosition(5, height);
-    index = 0;
+//    index = 0;
   }
 
   void customPreStep() override
@@ -62,11 +62,18 @@ public:
     if(mWorld->getTime() < t0)
       return;
 
-//    double time = mWorld->getTime() - t0;
+    double time = mWorld->getTime() - t0;
+    size_t index = floor(200*(time - t0));
 
-//    size_t index = floor(200*time);
     if(index >= mTrajectory.size())
       return;
+
+    if(index == 0)
+    {
+//      Eigen::Vector6d vel = mHubo->getBodyNode("Body_LAR");
+    }
+
+    std::cout << "Index: " << index << std::endl;
 
     const Eigen::VectorXd& qd = mTrajectory[index];
     for(size_t j=6; j < mHubo->getNumDofs(); ++j)
@@ -78,7 +85,7 @@ public:
       dof->setCommand(velocity);
     }
 
-    ++index;
+//    ++index;
   }
 
 protected:
@@ -89,9 +96,9 @@ protected:
 
   std::vector<Eigen::VectorXd> mTrajectory;
 
-  const double t0 = 3.0;
+  const double t0 = 1.0;
 
-  size_t index;
+//  size_t index;
 };
 
 SkeletonPtr createHubo()
@@ -160,6 +167,7 @@ SkeletonPtr createGround()
 int main()
 {
   WorldPtr world(new dart::simulation::World);
+//  world->setTimeStep(1.0/200.0);
 
   SkeletonPtr hubo = createHubo();
   world->addSkeleton(hubo);
@@ -192,7 +200,7 @@ int main()
   viewer.addWorldNode(node);
 //  viewer.simulate(true);
 
-  viewer.setUpViewInWindow(0, 0, 640, 480);
+  viewer.setUpViewInWindow(0, 0, 1280, 960);
 
   // Set up the default viewing position
   viewer.getCameraManipulator()->setHomePosition(osg::Vec3( 5.34,  3.00, 1.91),
@@ -200,7 +208,7 @@ int main()
                                                  osg::Vec3(-0.20, -0.08, 0.98));
 
   viewer.setCameraManipulator(viewer.getCameraManipulator());
-//  viewer.record("/home/grey/dump");
+  viewer.record("/home/grey/dump");
 
   viewer.run();
 }
