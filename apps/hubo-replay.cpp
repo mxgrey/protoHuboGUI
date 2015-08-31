@@ -30,124 +30,68 @@
  */
 
 #include <memory>
+#include <iostream>
+#include <fstream>
 
 #include <dart/dart.h>
 #include <osgDart/osgDart.h>
-
-#include <HuboCan/HuboDescription.hpp>
-#include <HuboCan/VirtualPump.hpp>
-#include <HuboCmd/Aggregator.hpp>
-#include <HuboState/State.hpp>
 
 #include <osg/Timer>
 
 using namespace dart::dynamics;
 using namespace dart::simulation;
 using namespace osgDart;
-using namespace HuboCan;
 
 class SimulationWorld : public osgDart::WorldNode
 {
 public:
 
-  SimulationWorld(WorldPtr world)
-    : osgDart::WorldNode(world)
+  SimulationWorld(WorldPtr world, const std::vector<Eigen::VectorXd>& trajectory)
+    : osgDart::WorldNode(world), mTrajectory(trajectory)
   {
     mHubo = world->getSkeleton("drchubo");
 
-    mDesc.parseFile("/opt/hubo/devices/DrcHubo.dd");
-    mDesc.broadcastInfo();
-
-    for(size_t i=0; i < mDesc.getJointCount(); ++i)
-    {
-      const hubo_joint_info_t& info = mDesc.joints[i]->info;
-      DegreeOfFreedom* dof = mHubo->getDof(info.name);
-      if(dof)
-        mIndexMapping.push_back(dof->getIndexInSkeleton());
-      else
-        mIndexMapping.push_back(dart::dynamics::INVALID_INDEX);
-    }
-
-    mState = std::unique_ptr<HuboState::State>(new HuboState::State(mDesc));
-    mAgg = std::unique_ptr<HuboCmd::Aggregator>(new HuboCmd::Aggregator(mDesc));
-
-    if(!mState->initialized())
-    {
-      std::cout << "State was not initialized correctly, so we are quitting.\n"
-                << " -- Either your ach channels are not open"
-                << " or your HuboDescription was not valid!\n" << std::endl;
-      return;
-    }
-
-    mAgg->run();
-
-    mNumTicks = 0;
-    mTimer.setStartTick();
+    double height = mHubo->getPosition(5);
+    mHubo->setPositions(mTrajectory[0]);
+    mHubo->setPosition(5, height);
+    index = 0;
   }
 
   void customPreStep() override
   {
-    const HuboCmd::JointCmdArray& commands = mAgg->update();
-    assert(commands.size() == mDesc.getJointCount());
-    for(size_t i=0; i < commands.size(); ++i)
-    {
-      size_t index = mIndexMapping[i];
-      if(dart::dynamics::INVALID_INDEX == index)
-        continue;
+    if(mWorld->getTime() < t0)
+      return;
 
-      const hubo_joint_cmd_t& cmd = commands[i];
-      DegreeOfFreedom* dof = mHubo->getDof(index);
-      double velocity = cmd.position - dof->getPosition();
+//    double time = mWorld->getTime() - t0;
+
+//    size_t index = floor(200*time);
+    if(index >= mTrajectory.size())
+      return;
+
+    const Eigen::VectorXd& qd = mTrajectory[index];
+    for(size_t j=6; j < mHubo->getNumDofs(); ++j)
+    {
+      DegreeOfFreedom* dof = mHubo->getDof(j);
+      double velocity = qd[j] - dof->getPosition();
       velocity /= mHubo->getTimeStep();
 
       dof->setCommand(velocity);
-
-      hubo_joint_state_t& state = mState->joints[i];
-      state.duty = dof->getCommand();
-      state.current = velocity;
-    }
-  }
-
-  void customPostStep() override
-  {
-//    double time = mTimer.time_s();
-    double time = mWorld->getTime();
-    double nextTickTime = (double)(mNumTicks)/mDesc.params.frequency;
-
-    if(time < nextTickTime)
-      return;
-
-    ++mNumTicks;
-
-    const HuboCmd::JointCmdArray& commands = mAgg->last_commands();
-    for(size_t i=0; i < mState->joints.size(); ++i)
-    {
-      size_t index = mIndexMapping[i];
-      if(dart::dynamics::INVALID_INDEX == index)
-        continue;
-
-      const hubo_joint_cmd_t& cmd = commands[i];
-      hubo_joint_state_t& state = mState->joints[i];
-      const DegreeOfFreedom* dof = mHubo->getDof(index);
-      state.reference = cmd.position;
-      state.position = dof->getPosition();
     }
 
-    mState->publish();
+    ++index;
   }
 
 protected:
 
+  const double frequency = 200;
+
   SkeletonPtr mHubo;
 
-  HuboDescription mDesc;
-  std::vector<size_t> mIndexMapping;
-  std::unique_ptr<HuboState::State> mState;
-  std::unique_ptr<HuboCmd::Aggregator> mAgg;
+  std::vector<Eigen::VectorXd> mTrajectory;
 
-  osg::Timer mTimer;
+  const double t0 = 3.0;
 
-  size_t mNumTicks;
+  size_t index;
 };
 
 SkeletonPtr createHubo()
@@ -156,6 +100,18 @@ SkeletonPtr createHubo()
   loader.addPackageDirectory("drchubo", DART_DATA_PATH"/urdf/drchubo");
   SkeletonPtr hubo =
       loader.parseSkeleton(DART_DATA_PATH"/urdf/drchubo/drchubo.urdf");
+
+  for(size_t i = 0; i < hubo->getNumBodyNodes(); ++i)
+  {
+    BodyNode* bn = hubo->getBodyNode(i);
+    if(bn->getName().substr(0, 7) == "Body_LF"
+       || bn->getName().substr(0, 7) == "Body_RF"
+       || bn->getName().substr(0, 7) == "Body_NK")
+    {
+      bn->remove();
+      --i;
+    }
+  }
 
   hubo->setPosition(5, 0.97);
 
@@ -205,15 +161,36 @@ int main()
 {
   WorldPtr world(new dart::simulation::World);
 
-  world->addSkeleton(createHubo());
+  SkeletonPtr hubo = createHubo();
+  world->addSkeleton(hubo);
   world->addSkeleton(createGround());
 
-  osg::ref_ptr<SimulationWorld> node = new SimulationWorld(world);
+  std::string name = "/home/grey/projects/protoHuboGUI/trajectory.dat";
+
+  std::ifstream file;
+  file.open(name);
+  std::vector<Eigen::VectorXd> trajectory;
+  if(file.is_open())
+  {
+    while(!file.eof())
+    {
+      trajectory.push_back(Eigen::VectorXd(hubo->getNumDofs()));
+      Eigen::VectorXd& q = trajectory.back();
+      for(size_t i=0; i < hubo->getNumDofs(); ++i)
+        file >> q[i];
+    }
+  }
+  else
+  {
+    std::cerr << "Could not open file: " << name << std::endl;
+  }
+
+  osg::ref_ptr<SimulationWorld> node = new SimulationWorld(world, trajectory);
   node->setNumStepsPerCycle(30);
 
   osgDart::Viewer viewer;
   viewer.addWorldNode(node);
-  viewer.simulate(true);
+//  viewer.simulate(true);
 
   viewer.setUpViewInWindow(0, 0, 640, 480);
 
@@ -223,6 +200,7 @@ int main()
                                                  osg::Vec3(-0.20, -0.08, 0.98));
 
   viewer.setCameraManipulator(viewer.getCameraManipulator());
+//  viewer.record("/home/grey/dump");
 
   viewer.run();
 }

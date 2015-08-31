@@ -587,9 +587,6 @@ Eigen::VectorXd solve(const std::shared_ptr<Solver>& solver,
     for(size_t i=0; i < problem->getNumEqConstraints(); ++i)
     {
       const FunctionPtr& f = problem->getEqConstraint(i);
-      double cost = f->eval(problem->getOptimalSolution());
-      if(std::abs(cost) > 1e-8)
-        std::cerr << "\n\n FOUND HIGH COST (" << tau << ":" << i << "): " << cost << "\n\n" << std::endl;
     }
   }
 
@@ -600,43 +597,11 @@ class TrajectoryDisplayWorld : public osgDart::WorldNode
 {
 public:
 
-  void setupClone(SkeletonPtr& cloneHubo, const Eigen::Vector4d& color)
-  {
-    cloneHubo = hubo->clone();
-
-    for(size_t i=0; i < cloneHubo->getNumBodyNodes(); ++i)
-    {
-      BodyNode* bn = cloneHubo->getBodyNode(i);
-      for(size_t j=0; j < bn->getNumVisualizationShapes(); ++j)
-      {
-        ShapePtr shape = bn->getVisualizationShape(j);
-        bn->removeVisualizationShape(shape);
-
-        if(MeshShapePtr mesh = std::dynamic_pointer_cast<MeshShape>(shape))
-        {
-          MeshShapePtr newMesh = std::make_shared<MeshShape>(
-                mesh->getScale(), mesh->getMesh(), mesh->getMeshPath(), nullptr);
-          newMesh->setColor(color);
-          newMesh->setColorMode(MeshShape::SHAPE_COLOR);
-          bn->addVisualizationShape(newMesh);
-        }
-      }
-    }
-
-    cloneHubo->resetPositions();
-    mWorld->addSkeleton(cloneHubo);
-    mWorld->getConstraintSolver()->getCollisionDetector()->removeSkeleton(cloneHubo);
-  }
-
   TrajectoryDisplayWorld(dart::simulation::WorldPtr world,
-                         const std::vector<Eigen::VectorXd>& traj,
-                         const std::vector<Eigen::VectorXd>& raw,
-                         const std::vector<size_t> mapping)
-    : osgDart::WorldNode(world), mTrajectory(traj), mRaw(raw),
-      mMapping(mapping), count(0)
+                         const std::vector<Eigen::VectorXd>& traj)
+    : osgDart::WorldNode(world), mTrajectory(traj), count(0)
   {
     hubo = world->getSkeleton(0);
-    setupClone(clone, Eigen::Vector4d(0.0, 0.67, 0.66, 0.4));
     LSR = hubo->getDof("LSR")->getIndexInSkeleton();
     RSR = hubo->getDof("RSR")->getIndexInSkeleton();
   }
@@ -650,16 +615,46 @@ public:
       return;
     }
 
-    hubo->resetPositions();
-    clone->resetPositions();
-
-    Eigen::VectorXd positions = mTrajectory[count];
+//    Eigen::VectorXd positions = mTrajectory[count];
 //    positions[LSR] += 90.0*M_PI/180.0;
 //    positions[RSR] -= 90.0*M_PI/180.0;
-//    hubo->setPositions(mTrajectory[count]);
 
-    hubo->setPositions(mMapping, positions);
-    clone->setPositions(mMapping, mRaw[count]);
+
+    double dt = mWorld->getTimeStep();
+
+    size_t last_1 = count <= 0? 0 : count - 1;
+    size_t last_2 = count <= 1? 0 : count - 2;
+    size_t last_3 = count <= 2? 0 : count - 3;
+    size_t last_4 = count <= 3? 0 : count - 4;
+
+    size_t next_1 = count < mTrajectory.size() - 1? count + 1 : count;
+    size_t next_2 = count < mTrajectory.size() - 2? count + 2 : count;
+    size_t next_3 = count < mTrajectory.size() - 3? count + 3 : count;
+    size_t next_4 = count < mTrajectory.size() - 4? count + 4 : count;
+
+    Eigen::VectorXd velocities =
+        (0.5*mTrajectory[next_1] - 0.5*mTrajectory[last_1])/dt;
+
+    Eigen::Matrix<double, 5, 1> c;
+    c << -205.0/72.0, 8.0/5.0, -1.0/5.0, 8.0/315.0, -1.0/560.0;
+
+    Eigen::VectorXd accelerations =
+        (  c[1]*mTrajectory[next_1] + c[2]*mTrajectory[next_2] + c[3]*mTrajectory[next_3] + c[4]*mTrajectory[next_4]
+         + c[0]*mTrajectory[count]
+         + c[1]*mTrajectory[last_1] + c[2]*mTrajectory[last_2] + c[3]*mTrajectory[last_3] + c[4]*mTrajectory[last_4])/pow(dt,2);
+
+
+//    accelerations.head<6>().setZero();
+
+    hubo->setPositions(mTrajectory[count]);
+    hubo->setVelocities(velocities);
+    hubo->setAccelerations(accelerations);
+
+//    std::cout << hubo->getZMP().transpose() << " \t:\t ";
+    std::cout << accelerations.block<8,1>(0,0).transpose() << std::endl;
+
+//    hubo->setPositions(mMapping, positions);
+//    clone->setPositions(mMapping, mRaw[count]);
 
     ++count;
     if(count >= mTrajectory.size())
@@ -669,10 +664,7 @@ public:
 protected:
 
   SkeletonPtr hubo;
-  SkeletonPtr clone;
   std::vector<Eigen::VectorXd> mTrajectory;
-  std::vector<Eigen::VectorXd> mRaw;
-  std::vector<size_t> mMapping;
   size_t count;
   size_t LSR;
   size_t RSR;
@@ -778,10 +770,11 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 //  }
 //  std::cout << "\n";
 
-  std::shared_ptr<Solver> solver = std::make_shared<GradientDescentSolver>();
+  std::shared_ptr<GradientDescentSolver> solver = std::make_shared<GradientDescentSolver>();
   std::shared_ptr<Problem> problem = std::make_shared<Problem>();
   problem->setDimension(hubo->getNumDofs());
   solver->setProblem(problem);
+  solver->setStepSize(0.1);
   BezierFuncArray bezierFuncs;
   Eigen::VectorXd alphas;
   std::vector<Term> terms;
@@ -867,7 +860,7 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   problem->addEqConstraint(support->getProblem()->getEqConstraint(0));
 
   solver->setNumMaxIterations(1000);
-  solver->setTolerance(1e-12);
+  solver->setTolerance(1e-6);
 
 //  hubo->setPositions(q_plus);
   hubo->setPositions(lastPositions);
@@ -957,8 +950,6 @@ SkeletonPtr createHubo()
 //  std::cout << "LEP: " << hubo->getDof("LEP")->getPositionLowerLimit()
 //            << " : " << hubo->getDof("LEP")->getPositionUpperLimit() << std::endl;
 
-  hubo->setTimeStep(1.0/200.0);
-
   return hubo;
 }
 
@@ -981,37 +972,64 @@ void dumpTrajectory(const std::vector<Eigen::VectorXd>& traj,
 
 int main()
 {
+  dart::simulation::WorldPtr world = std::make_shared<dart::simulation::World>();
   SkeletonPtr hubo = createHubo();
+  world->addSkeleton(hubo);
+  world->setTimeStep(1.0/200.0);
 
-  std::string file = "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
+//  std::string file = "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
+  std::string yaml = "/home/grey/projects/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
 
-//  std::vector<Eigen::VectorXd> trajectory =
-//      setupAndSolveProblem(hubo, "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml", "L", "R");
-//      setupAndSolveProblem(hubo, "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml", "R", "L");
+  bool loadfile = false;
+  loadfile = true;
 
-  double pdot0 = 0.0;
-  double vd = 0.0;
-//  std::vector<Eigen::VectorXd> leftRamp =
-//      setupAndSolveProblem(hubo, file, "L", "R", &pdot0, nullptr);
-  std::vector<Eigen::VectorXd> rightStance =
-      setupAndSolveProblem(hubo, file, "R", "L", nullptr, nullptr);
-  std::vector<Eigen::VectorXd> leftStance =
-      setupAndSolveProblem(hubo, file, "L", "R", nullptr, nullptr);
-//  std::vector<Eigen::VectorXd> rightRamp =
-//      setupAndSolveProblem(hubo, file, "R", "L", nullptr, &vd);
-
+  std::string filename = "/home/grey/projects/protoHuboGUI/trajectory.dat";
 
   std::vector<Eigen::VectorXd> raw_trajectory;
-//  for(const Eigen::VectorXd& pos : leftRamp)
-//    raw_trajectory.push_back(pos);
-  for(const Eigen::VectorXd& pos : rightStance)
-    raw_trajectory.push_back(pos);
-  for(const Eigen::VectorXd& pos : leftStance)
-    raw_trajectory.push_back(pos);
-//  for(const Eigen::VectorXd& pos : rightRamp)
-//    raw_trajectory.push_back(pos);
+  if(loadfile)
+  {
+    std::ifstream file;
+    file.open(filename);
+    if(file.is_open())
+    {
+      while(!file.eof())
+      {
+        raw_trajectory.push_back(Eigen::VectorXd(hubo->getNumDofs()));
+        Eigen::VectorXd& q = raw_trajectory.back();
+        for(size_t i=0; i < hubo->getNumDofs(); ++i)
+          file >> q[i];
+      }
+    }
+    else
+    {
+      std::cerr << "Could not open file: " << filename << std::endl;
+    }
+  }
+  else
+  {
+    double pdot0 = 0.0;
+    double vd = 0.0;
+    std::vector<Eigen::VectorXd> leftRamp =
+        setupAndSolveProblem(hubo, yaml, "L", "R", &pdot0, nullptr);
+    std::vector<Eigen::VectorXd> rightStance =
+        setupAndSolveProblem(hubo, yaml, "R", "L", nullptr, nullptr);
+    std::vector<Eigen::VectorXd> leftStance =
+        setupAndSolveProblem(hubo, yaml, "L", "R", nullptr, nullptr);
+    std::vector<Eigen::VectorXd> rightRamp =
+        setupAndSolveProblem(hubo, yaml, "R", "L", nullptr, &vd);
 
 
+    for(const Eigen::VectorXd& pos : leftRamp)
+      raw_trajectory.push_back(pos);
+    for(const Eigen::VectorXd& pos : rightStance)
+      raw_trajectory.push_back(pos);
+    for(const Eigen::VectorXd& pos : leftStance)
+      raw_trajectory.push_back(pos);
+    for(const Eigen::VectorXd& pos : rightRamp)
+      raw_trajectory.push_back(pos);
+
+    dumpTrajectory(raw_trajectory, filename);
+  }
 
 
   bool operate = false;
@@ -1027,6 +1045,8 @@ int main()
       DegreeOfFreedom* dof = hubo->getDof(i);
       mOperatorIndices.push_back(i);
       indexNames.push_back(dof->getName());
+
+      dof->setPosition(raw_trajectory[0][i]);
     }
     mOperator.setJointIndices(indexNames);
 
@@ -1037,17 +1057,16 @@ int main()
 
     mOperator.clearWaypoints();
 
-    sleep(2);
+    sleep(10);
 
     mOperator.update();
     hubo_player_state_t player = mOperator.getPlayerState();
-    std::cout << "last traj size: " << player.trajectory_size << std::endl;
-
     while(player.trajectory_size == 0 || player.current_index < player.trajectory_size - 1)
     {
       mOperator.update();
       player = mOperator.getPlayerState();
     }
+
 
     for(size_t i=0; i < raw_trajectory.size(); ++i)
     {
@@ -1061,116 +1080,28 @@ int main()
   }
   else
   {
-    HuboPath::Operator mOperator;
-    std::vector<std::string> indexNames;
-    std::vector<size_t> mOperatorIndices;
-    for(size_t i=6; i < hubo->getNumDofs(); ++i)
-    {
-      DegreeOfFreedom* dof = hubo->getDof(i);
-      mOperatorIndices.push_back(i);
-      indexNames.push_back(dof->getName());
-    }
-    mOperator.setJointIndices(indexNames);
-
-    for(size_t i=0; i < raw_trajectory.size(); ++i)
-    {
-      hubo->setPositions(raw_trajectory[i]);
-      mOperator.addWaypoint(hubo->getPositions(mOperatorIndices));
-    }
-    const IndexArray& indices = mOperator.getIndexMap();
-
-    mOperator.setInterpolationMode(HUBO_PATH_SATURATE);
-    HuboPath::Trajectory test = mOperator.getCurrentTrajectory();
-    test.elements.erase(test.elements.begin());
-
-    if(!test.check_limits())
-      std::cout << "Original failed the limit test" << std::endl;
-    else
-      std::cout << "Original passed the limit test" << std::endl;
-
-
-    std::vector<Eigen::VectorXd> original_trajectory;
-
-
-    original_trajectory.resize(test.elements.size(), Eigen::VectorXd(indices.size()));
-    for(size_t i=0; i < original_trajectory.size(); ++i)
-    {
-      Eigen::VectorXd& q = original_trajectory[i];
-      q.resize(indices.size());
-      const hubo_path_element_t& elem = test.elements[i];
-      for(size_t j=0; j < indices.size(); ++j)
-      {
-        q[j] = elem.references[indices[j]];
-      }
-    }
-
-    dumpTrajectory(original_trajectory, "/home/grey/dump/rawTraj.dat");
-
-
-    test.interpolate(HUBO_PATH_SATURATE);
-    if(!test.check_limits())
-      std::cout << "FAILED LIMIT TEST" << std::endl;
-    else
-      std::cout << "PASSED LIMIT TEST" << std::endl;
-
-
-//    std::cout << test << std::endl;
-
-    std::vector<Eigen::VectorXd> final_trajectory;
-    final_trajectory.resize(test.elements.size(), Eigen::VectorXd(indices.size()));
-    for(size_t i=0; i < final_trajectory.size(); ++i)
-    {
-      Eigen::VectorXd& q = final_trajectory[i];
-      q.resize(indices.size());
-      const hubo_path_element_t& elem = test.elements[i];
-      for(size_t j=0; j < indices.size(); ++j)
-      {
-        q[j] = elem.references[indices[j]];
-      }
-    }
-
-    dumpTrajectory(final_trajectory, "/home/grey/dump/saturatedTraj.dat");
-
-    dart::simulation::WorldPtr world = std::make_shared<dart::simulation::World>();
-    world->addSkeleton(hubo);
     osg::ref_ptr<TrajectoryDisplayWorld> display =
-        new TrajectoryDisplayWorld(world, final_trajectory, original_trajectory, mOperatorIndices);
-
-    std::cout << "final trajectory size: " << final_trajectory.size() << std::endl;
-
-    bool different = false;
-    for(size_t i=0; i < std::min(original_trajectory.size(), final_trajectory.size()); ++i)
-    {
-      if(original_trajectory[i] != final_trajectory[i])
-      {
-        different = true;
-        break;
-      }
-    }
-
-    if(!different)
-      std::cout << "TRAJECTORIES ARE THE SAME" << std::endl;
-    else
-      std::cout << "Trajectories are different" << std::endl;
-
+        new TrajectoryDisplayWorld(world, raw_trajectory);
 
     osgDart::Viewer viewer;
     viewer.addWorldNode(display);
     viewer.allowSimulation(false);
-    viewer.record("/home/grey/dump/");
+//    viewer.record("/home/grey/dump/");
+
+//    osg::ref_ptr<osgDart::SupportPolygonVisual> support =
+//        new osgDart::SupportPolygonVisual(hubo);
+    viewer.addAttachment(new osgDart::SupportPolygonVisual(hubo, -0.97+0.02));
+
+    viewer.setUpViewInWindow(0, 0, 1280, 960);
+
+    // Set up the default viewing position
+    viewer.getCameraManipulator()->setHomePosition(osg::Vec3( 5.34,  3.00, 1.00),
+                                                   osg::Vec3( 0.00,  0.00, 0.00),
+                                                   osg::Vec3(-0.20, -0.08, 0.98));
+
+    // Reset the camera manipulator so that it starts in the new viewing position
+    viewer.setCameraManipulator(viewer.getCameraManipulator());
 
     viewer.run();
   }
-
-//  dump.open("/home/grey/dump/rightStanceTraj.dat", std::ofstream::out);
-//  for(size_t i=0; i < rightStance.size(); ++i)
-//  {
-//    const Eigen::VectorXd& pos = rightStance[i];
-//    for(int j=0; j < pos.size(); ++j)
-//      dump << pos[j] << "\t";
-//    dump << "\n";
-//  }
-//  dump.close();
-
-//  std::cout << "Full trajectory size: " << raw_trajectory.size() << std::endl;
 }
