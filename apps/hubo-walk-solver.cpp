@@ -41,6 +41,8 @@
 #include <Eigen/QR>
 #include <array>
 
+#include <osg/Timer>
+
 using namespace dart::dynamics;
 using namespace dart::optimizer;
 
@@ -314,7 +316,7 @@ class BezierDependentFunc
 {
 public:
 
-  void setTau(double tau)
+  virtual void setTau(double tau)
   {
     mTau = tau;
   }
@@ -391,6 +393,15 @@ public:
     A.setZero();
   }
 
+  void recomputeNullspace()
+  {
+    dart::math::computeNullSpace(A, NS);
+    if(NS.rows() > 0 && NS.cols() > 0)
+      Anull = NS*NS.transpose();
+    else
+      Anull.resize(0,0);
+  }
+
   void setEqn(size_t row,
               const std::vector<Term>& terms,
               const Eigen::VectorXd& alphas)
@@ -404,16 +415,36 @@ public:
 
     mAlphas[row] = alphas;
 
-    dart::math::computeNullSpace(A, NS);
-    if(NS.rows() > 0 && NS.cols() > 0)
-      Anull = NS*NS.transpose();
-    else
-      Anull.resize(0,0);
+    recomputeNullspace();
+  }
+
+  void setTauSatisfaction(const std::vector<Term>& terms,
+                          double p_plus_, double p_minus_)
+  {
+    p_plus = p_plus_;
+    p_minus = p_minus_;
+
+    for(size_t i=0; i < terms.size(); ++i)
+    {
+      A(0, terms[i].index) = terms[i].coeff;
+    }
+
+    recomputeNullspace();
+  }
+
+  void setTau(double tau) override
+  {
+    mTau = tau;
+
+    computeX();
   }
 
   void computeX()
   {
-    for(int i=0; i < eqns; ++i)
+//    std::cout << "computing x" << std::endl;
+    b[0] = p_plus + mTau*(p_minus - p_plus);
+
+    for(int i=1; i < eqns; ++i)
     {
       b[i] = computeBezier(mTau, mAlphas[i]);
     }
@@ -431,12 +462,9 @@ public:
   void evalGradient(const Eigen::VectorXd& _x,
                     Eigen::Map<Eigen::VectorXd> _grad) override final
   {
-    computeX();
-
     _grad = _x - x;
     if(Anull.cols() > 0 && Anull.rows() > 0)
       _grad -= Anull*_grad;
-//    std::cout << "system: (10) " << _x[10] << "," << x[10] << " | (11) " << _x[11] << "," << x[11] << std::endl;
   }
 
 protected:
@@ -446,10 +474,63 @@ protected:
   Eigen::Matrix<double, dofs, 1> x;
   Eigen::Matrix<double, dofs, 1> dx;
 
+  double p_plus;
+  double p_minus;
+
   Eigen::Matrix<double, dofs, Eigen::Dynamic> NS;
   Eigen::MatrixXd Anull;
 
   std::array<Eigen::VectorXd, eqns> mAlphas;
+};
+
+class Holonomic : public Function
+{
+public:
+
+  Holonomic(BodyNode* node)
+    : bn(node)
+  {
+    skel = bn->getSkeleton();
+    mBnTf = Eigen::Isometry3d::Identity();
+  }
+
+  void setTargetTransform(const Eigen::Isometry3d& tf)
+  {
+    mBnTf = tf;
+  }
+
+  double eval(const Eigen::VectorXd& _x) override final
+  {
+    skel->setPositions(_x);
+    const Eigen::Isometry3d& currentBnTf = bn->getWorldTransform();
+    const Eigen::Isometry3d& currentRootTf = skel->getBodyNode(0)->getWorldTransform();
+
+    const Eigen::Isometry3d& deltaTf = mBnTf * currentBnTf.inverse();
+    const Eigen::Isometry3d& newRootTf = deltaTf * currentRootTf;
+
+    const Eigen::Vector6d& newRootPos = FreeJoint::convertToPositions(newRootTf);
+    rootGrad = _x.head<6>() - newRootPos;
+
+    return rootGrad.norm();
+  }
+
+  void evalGradient(const Eigen::VectorXd& /*_x*/,
+                    Eigen::Map<Eigen::VectorXd> _grad) override final
+  {
+    // Note: This function relies on the fact that GradientDescentSolver calls
+    // eval() before it calls evalGradient()
+    _grad.head<6>() = rootGrad;
+  }
+
+protected:
+
+  SkeletonPtr skel;
+
+  BodyNode* bn;
+
+  Eigen::Isometry3d mBnTf;
+
+  Eigen::Vector6d rootGrad;
 };
 
 class SatisfyTau : public Function,
@@ -736,9 +817,6 @@ public:
     hubo->setVelocities(velocities);
     hubo->setAccelerations(accelerations);
 
-//    std::cout << hubo->getZMP().transpose() << " \t:\t ";
-    std::cout << accelerations.block<8,1>(0,0).transpose() << std::endl;
-
 //    hubo->setPositions(mMapping, positions);
 //    clone->setPositions(mMapping, mRaw[count]);
 
@@ -779,7 +857,7 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
 {\
   alphas = getAlphas(a, index-1);\
   terms = T;\
-  system->setEqn(index-1, terms, alphas);\
+  system->setEqn(index, terms, alphas);\
 }
 
 #define ADD_EE_ORIENTATION_OUTPUT( index1, index2, index3, body )\
@@ -808,6 +886,9 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
 double computeP(const SkeletonPtr& hubo, const std::string& st,
                 double thighLength, double calfLength)
 {
+//  std::cout << "coeffs for actual: "
+//            << "(" << hubo->getDof(st+"AP")->getIndexInSkeleton() << ") " << -calfLength << " \t|\t "
+//            << "(" << hubo->getDof(st+"")
   return calfLength*(-hubo->getDof(st+"AP")->getPosition())
       + thighLength*(-hubo->getDof(st+"AP")->getPosition()
                      -hubo->getDof(st+"KP")->getPosition());
@@ -890,8 +971,8 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   problem->setLowerBounds(lower);
   problem->setUpperBounds(upper);
 
-  std::shared_ptr<LinearComboSystem<23,33>> system =
-      std::make_shared<LinearComboSystem<23,33>>();
+  std::shared_ptr<LinearComboSystem<24,33>> system =
+      std::make_shared<LinearComboSystem<24,33>>();
   problem->addEqConstraint(system);
   bezierFuncs.push_back(system);
 
@@ -943,50 +1024,26 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
   std::cout << "thigh: " << thighLength << "\n" << "calf: " << calfLength << std::endl;
 
-  {
-    // Constraint #25
-    terms = make_terms(hubo, -calfLength, st+"AP", -thighLength, st+"AP", -thighLength, st+"KP");
-    std::shared_ptr<SatisfyTau> f = std::make_shared<SatisfyTau>(terms, p_plus, p_minus);
-    problem->addEqConstraint(f);
-    bezierFuncs.push_back(f);
-  }
 
-//  // Constraint #26
-//  JacobianNode* support_foot = hubo->getBodyNode("Body_"+st+"AR");
-//  InverseKinematicsPtr support = InverseKinematics::create(support_foot);
-//  std::vector<size_t> allDofs;
-//  for(size_t i=0; i < hubo->getNumDofs(); ++i)
-//    allDofs.push_back(i);
-//  support->setDofs(allDofs);
-//  Eigen::VectorXd weights = Eigen::VectorXd::Zero(allDofs.size());
-////  weights.head<6>() = Eigen::Vector6d::Constant(5.0);
-//  weights.head<6>() = Eigen::Vector6d::Constant(10.0);
-//  support->getGradientMethod().setComponentWeights(weights);
-//  support->getGradientMethod().setComponentWiseClamp(std::numeric_limits<double>::infinity());
-//  problem->addEqConstraint(support->getProblem()->getEqConstraint(0));
+  system->setTauSatisfaction(
+        make_terms(hubo, -calfLength-thighLength, st+"AP",
+                                    -thighLength, st+"KP"),
+        p_plus, p_minus);
+
+  std::shared_ptr<Holonomic> h = std::make_shared<Holonomic>(
+        hubo->getBodyNode("Body_"+st+"AR"));
+  problem->addEqConstraint(h);
 
   solver->setNumMaxIterations(1000);
   solver->setTolerance(1e-6);
 
 //  hubo->setPositions(q_plus);
   hubo->setPositions(lastPositions);
-//  support->getTarget()->setTransform(support_foot->getTransform());
+  h->setTargetTransform(hubo->getBodyNode("Body_"+st+"AR")->getWorldTransform());
+
   std::vector<Eigen::VectorXd> trajectory;
 
-//  hubo->setPositions(solve(solver, bezierFuncs, 0.0));
-//  double p_plus = computeP(hubo, st, thighLength, calfLength);
-//  hubo->setPositions(solve(solver, bezierFuncs, 1.0));
-//  double p_minus = computeP(hubo, st, thighLength, calfLength);
-
   hubo->setPositions(lastPositions);
-//  double p = computeP(hubo, st, thighLength, calfLength);
-
-//  double tau = 0.0;
-//  if(tau < 0)
-//  {
-//    std::cout << "clamping tau from " << tau << std::endl;
-//    tau = 0;
-//  }
 
   double p0 = params["p0"].as<double>();
   std::cout << "\n\n" << st << " Foot Trajectory (p0 " << p0 << ") :\n";
@@ -1005,14 +1062,13 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
       break;
     }
 
-//    std::cout << "p: " << p << " \t p_plus: " << p_plus << " \t p_minus: " << p_minus << std::endl;
     trajectory.push_back(solve(solver, bezierFuncs, tau));
 
-    double actualP = computeP(hubo, st, thighLength, calfLength);
-    double actualTau = (actualP - p_plus)/(p_minus - p_plus);
+//    double actualP = computeP(hubo, st, thighLength, calfLength);
+//    double actualTau = (actualP - p_plus)/(p_minus - p_plus);
 
-    std::cout << "tau: " << tau << " \t actualTau: " << actualTau
-              << " \t p: " << p << " \t actualP: " << actualP << std::endl;
+//    std::cout << "tau: " << tau << " \t actualTau: " << actualTau
+//              << " \t p: " << p << " \t actualP: " << actualP << std::endl;
 
     if(std::abs(tau-lastTau) < 1e-6)
       break;
@@ -1021,7 +1077,7 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
     time += hubo->getTimeStep();
 
-    std::cout << "solved in " << solver->getLastNumIterations() << " steps" << std::endl;
+//    std::cout << "solved in " << solver->getLastNumIterations() << " steps" << std::endl;
   } while(tau <= 1.0);
 
   trajectory.push_back(solve(solver, bezierFuncs, tau));
@@ -1085,6 +1141,9 @@ int main()
   world->addSkeleton(hubo);
   world->setTimeStep(1.0/200.0);
 
+//  std::cout << "RAP: " << hubo->getDof("RAP")->getIndexInSkeleton() << "\n"
+//            << "RKP: " << hubo->getDof("RKP")->getIndexInSkeleton() << std::endl;
+
   std::cout << "dofs: " << hubo->getNumDofs() << std::endl;
 
 //  std::string file = "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
@@ -1117,6 +1176,9 @@ int main()
   }
   else
   {
+    osg::Timer timer;
+    timer.setStartTick();
+
     double pdot0 = 0.0;
     double vd = 0.0;
 //    std::vector<Eigen::VectorXd> leftRamp =
@@ -1128,6 +1190,8 @@ int main()
 //    std::vector<Eigen::VectorXd> rightRamp =
 //        setupAndSolveProblem(hubo, yaml, "R", "L", nullptr, &vd);
 
+    std::cout << "Computation Time: " << timer.time_s() << std::endl;
+
 
 //    for(const Eigen::VectorXd& pos : leftRamp)
 //      raw_trajectory.push_back(pos);
@@ -1137,6 +1201,8 @@ int main()
       raw_trajectory.push_back(pos);
 //    for(const Eigen::VectorXd& pos : rightRamp)
 //      raw_trajectory.push_back(pos);
+
+    std::cout << "Trajectory Time:  " << (double)(raw_trajectory.size())*hubo->getTimeStep() << std::endl;
 
     dumpTrajectory(raw_trajectory, filename);
   }
