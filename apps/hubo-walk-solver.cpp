@@ -46,6 +46,95 @@
 using namespace dart::dynamics;
 using namespace dart::optimizer;
 
+static double sign(double value)
+{
+  return value > 0? 1.0 : (value < 0? -1.0 : 0.0);
+}
+
+class WalkSolver : public Solver
+{
+public:
+
+  WalkSolver(const std::shared_ptr<Problem>& problem = nullptr)
+    : Solver(problem)
+  {
+    // Do nothing
+  }
+
+  bool solve() override final
+  {
+    const std::shared_ptr<Problem>& problem = mProperties.mProblem;
+
+    Eigen::VectorXd x = problem->getInitialGuess();
+    Eigen::VectorXd dx = Eigen::VectorXd::Zero(x.size());
+    Eigen::Map<Eigen::VectorXd> dxmap(dx.data(), dx.size());
+
+    bool solved = false;
+    mLastNumIterations = 0;
+
+    while(!solved && mLastNumIterations < mProperties.mNumMaxIterations)
+    {
+      for(size_t i=0; i < problem->getNumEqConstraints(); ++i)
+      {
+        const FunctionPtr& constraint = problem->getEqConstraint(i);
+        double cost = constraint->eval(x);
+        dxmap.setZero();
+        constraint->evalGradient(x, dxmap);
+        x -= dxmap/* * sign(cost)*/;
+      }
+
+      solved = true;
+      for(size_t i=0; i < problem->getNumEqConstraints(); ++i)
+      {
+        const FunctionPtr& constraint = problem->getEqConstraint(i);
+        double cost = constraint->eval(x);
+        if(std::abs(cost) > mProperties.mTolerance)
+        {
+//          std::cout << "[" << i << "] " << cost << ": ";
+          constraint->evalGradient(x, dxmap);
+
+//          for(size_t j=0; j < dxmap.size(); ++j)
+//          {
+//            if(std::abs(dxmap[j]) > mProperties.mTolerance)
+//              std::cout << "(" << j << ") " << dxmap[j] << ", ";
+//          }
+//          std::cout << " \t|\t ";
+          solved = false;
+        }
+      }
+
+//      if(!solved)
+//        std::cout << std::endl;
+
+      ++mLastNumIterations;
+    }
+
+    problem->setOptimalSolution(x);
+    problem->setOptimumValue(0.0);
+    return solved;
+  }
+
+  std::string getType() const override final
+  {
+    return "WalkSolver";
+  }
+
+  std::shared_ptr<Solver> clone() const override
+  {
+    return std::make_shared<WalkSolver>(mProperties.mProblem);
+  }
+
+  size_t getLastNumIterations() const
+  {
+    return mLastNumIterations;
+  }
+
+protected:
+
+  size_t mLastNumIterations;
+
+};
+
 class HuboLegIK : public InverseKinematics::Analytical
 {
 public:
@@ -514,9 +603,11 @@ public:
     return rootGrad.norm();
   }
 
-  void evalGradient(const Eigen::VectorXd& /*_x*/,
+  void evalGradient(const Eigen::VectorXd& _x,
                     Eigen::Map<Eigen::VectorXd> _grad) override final
   {
+    _grad.setZero();
+
     // Note: This function relies on the fact that GradientDescentSolver calls
     // eval() before it calls evalGradient()
     _grad.head<6>() = rootGrad;
@@ -533,59 +624,6 @@ protected:
   Eigen::Vector6d rootGrad;
 };
 
-class SatisfyTau : public Function,
-                   public BezierDependentFunc
-{
-public:
-
-  SatisfyTau(const std::vector<Term>& p_terms_,
-             double p_plus_, double p_minus_)
-
-    : p_terms(p_terms_),
-      p_plus(p_plus_),
-      p_minus(p_minus_)
-  {
-    // Do nothing
-  }
-
-  double computeP(const Eigen::VectorXd& _x)
-  {
-    double p = 0;
-    for(const Term& term : p_terms)
-      p += term.coeff * _x[term.index];
-
-    return p;
-  }
-
-  double computeCost(const Eigen::VectorXd& _x)
-  {
-    double p = computeP(_x);
-    return (p - p_plus) - mTau*(p_minus - p_plus);
-  }
-
-  double eval(const Eigen::VectorXd& _x) override final
-  {
-    double cost = computeCost(_x);
-    return cost*cost;
-  }
-
-  void evalGradient(const Eigen::VectorXd& _x,
-                    Eigen::Map<Eigen::VectorXd> _grad) override final
-  {
-    _grad.setZero();
-    const double cost = computeCost(_x);
-    for(const Term& term : p_terms)
-      _grad[term.index] = 2 * term.coeff * cost;
-  }
-
-protected:
-
-  std::vector<Term> p_terms;
-
-  double p_plus;
-  double p_minus;
-};
-
 class EndEffectorConstraint : public Function,
                               public BezierDependentFunc
 {
@@ -594,8 +632,9 @@ public:
   /// alphas should have six entries, one corresponding to each component of the
   /// EndEffector pose. Unused alphas can be set to all zeros.
   EndEffectorConstraint(JacobianNode* node,
-                        const std::vector<Eigen::VectorXd>& alphas)
-    : mAlphaArray(alphas)
+                        const std::vector<Eigen::VectorXd>& alphas,
+                        const std::vector<size_t>& ignoreDofs = std::vector<size_t>())
+    : mAlphaArray(alphas), mIgnoreDofs(ignoreDofs)
   {
     for(size_t i=0; i < mAlphaArray.size(); ++i)
     {
@@ -651,18 +690,11 @@ public:
                     Eigen::Map<Eigen::VectorXd> _grad) override final
   {
     mIK->getGradientMethod().evalGradient(_x, _grad);
-//    std::cout << "hip grad:   " << _grad[mIK->getNode()->getSkeleton()->getDof("LHP")->getIndexInSkeleton()] << "\n"
-//              << "knee grad:  " << _grad[mIK->getNode()->getSkeleton()->getDof("LKP")->getIndexInSkeleton()] << "\n"
-//              << "ankle grad: " << _grad[mIK->getNode()->getSkeleton()->getDof("LAP")->getIndexInSkeleton()] << "\n"
-//              << std::endl;
-//    std::cout << "grad: " << _grad.transpose() << std::endl;
 
-//    for(size_t i=0; i < _grad.size(); ++i)
-//    {
-//      if(_grad[i] != 0.0)
-//        std::cout << "(" << i << ")" << mIK->getNode()->getSkeleton()->getDof(i)->getName() << " " << _grad[i] << " | ";
-//    }
-//    std::cout << std::endl;
+    for(size_t dof : mIgnoreDofs)
+    {
+      _grad[dof] = 0.0;
+    }
   }
 
   InverseKinematicsPtr mIK;
@@ -670,6 +702,7 @@ public:
 protected:
 
   std::vector<Eigen::VectorXd> mAlphaArray;
+  std::vector<size_t> mIgnoreDofs;
 
 };
 
@@ -844,15 +877,6 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
   return alphas;
 }
 
-//#define ADD_LINEAR_OUTPUT( index, T ) \
-//{\
-//  alphas = getAlphas(a, index-1);\
-//  terms = T;\
-//  std::shared_ptr<LinearCombo> f = std::make_shared<LinearCombo>(terms, alphas);\
-//  bezierFuncs.push_back(f);\
-//  problem->addEqConstraint(f);\
-//}
-
 #define ADD_LINEAR_OUTPUT( index, T ) \
 {\
   alphas = getAlphas(a, index-1);\
@@ -860,7 +884,7 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
   system->setEqn(index, terms, alphas);\
 }
 
-#define ADD_EE_ORIENTATION_OUTPUT( index1, index2, index3, body )\
+#define ADD_SWING_FOOT_ORIENTATION_OUTPUT( index1, index2, index3, body )\
 {\
   JacobianNode* ee = body;\
   std::vector<Eigen::VectorXd> alphaArray;\
@@ -870,8 +894,12 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
   alphaArray.push_back(getAlphas(a, index1-1));\
   alphaArray.push_back(getAlphas(a, index2-1));\
   alphaArray.push_back(getAlphas(a, index3-1));\
+  std::vector<size_t> ignoreDofs;\
+  ignoreDofs.push_back(hubo->getDof(sw+"HP")->getIndexInSkeleton());\
+  ignoreDofs.push_back(hubo->getDof(sw+"HR")->getIndexInSkeleton());\
+  ignoreDofs.push_back(hubo->getDof(sw+"KP")->getIndexInSkeleton());\
   std::shared_ptr<EndEffectorConstraint> f =\
-      std::make_shared<EndEffectorConstraint>(ee, alphaArray);\
+      std::make_shared<EndEffectorConstraint>(ee, alphaArray/*, ignoreDofs*/);\
   f->mIK->getErrorMethod().setLinearBounds(\
       Eigen::Vector3d::Constant(-std::numeric_limits<double>::infinity()),\
       Eigen::Vector3d::Constant( std::numeric_limits<double>::infinity()));\
@@ -948,13 +976,12 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 //  }
 //  std::cout << "\n";
 
-  std::shared_ptr<GradientDescentSolver> solver = std::make_shared<GradientDescentSolver>();
+//  std::shared_ptr<GradientDescentSolver> solver = std::make_shared<GradientDescentSolver>();
+//  solver->setStepSize(1.0);
+  std::shared_ptr<WalkSolver> solver = std::make_shared<WalkSolver>();
   std::shared_ptr<Problem> problem = std::make_shared<Problem>();
   problem->setDimension(hubo->getNumDofs());
   solver->setProblem(problem);
-//  solver->setStepSize(0.1);
-//  solver->setStepSize(1.0);
-  solver->setStepSize(1.0);
   BezierFuncArray bezierFuncs;
   Eigen::VectorXd alphas;
   std::vector<Term> terms;
@@ -1020,11 +1047,6 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
   ADD_LINEAR_OUTPUT(23, make_terms(hubo, 1.0, st+"HR", -1.0, sw+"HR"));
 
-  ADD_EE_ORIENTATION_OUTPUT( 24, 25, 26, hubo->getBodyNode("Body_"+sw+"AR") );
-
-  std::cout << "thigh: " << thighLength << "\n" << "calf: " << calfLength << std::endl;
-
-
   system->setTauSatisfaction(
         make_terms(hubo, -calfLength-thighLength, st+"AP",
                                     -thighLength, st+"KP"),
@@ -1033,6 +1055,11 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   std::shared_ptr<Holonomic> h = std::make_shared<Holonomic>(
         hubo->getBodyNode("Body_"+st+"AR"));
   problem->addEqConstraint(h);
+
+  ADD_SWING_FOOT_ORIENTATION_OUTPUT( 24, 25, 26, hubo->getBodyNode("Body_"+sw+"AR") );
+
+  std::cout << "thigh: " << thighLength << "\n" << "calf: " << calfLength << std::endl;
+
 
   solver->setNumMaxIterations(1000);
   solver->setTolerance(1e-6);
@@ -1140,6 +1167,9 @@ int main()
   SkeletonPtr hubo = createHubo();
   world->addSkeleton(hubo);
   world->setTimeStep(1.0/200.0);
+
+  std::cout << "13: " << hubo->getDof(13)->getName() << "\n"
+            << "14: " << hubo->getDof(14)->getName() << std::endl;
 
 //  std::string file = "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
   std::string yaml = "/home/grey/projects/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
