@@ -46,10 +46,10 @@
 using namespace dart::dynamics;
 using namespace dart::optimizer;
 
-static double sign(double value)
-{
-  return value > 0? 1.0 : (value < 0? -1.0 : 0.0);
-}
+//static double sign(double value)
+//{
+//  return value > 0? 1.0 : (value < 0? -1.0 : 0.0);
+//}
 
 class WalkSolver : public Solver
 {
@@ -77,7 +77,7 @@ public:
       for(size_t i=0; i < problem->getNumEqConstraints(); ++i)
       {
         const FunctionPtr& constraint = problem->getEqConstraint(i);
-        double cost = constraint->eval(x);
+//        double cost = constraint->eval(x);
         dxmap.setZero();
         constraint->evalGradient(x, dxmap);
         x -= dxmap/* * sign(cost)*/;
@@ -603,7 +603,7 @@ public:
     return rootGrad.norm();
   }
 
-  void evalGradient(const Eigen::VectorXd& _x,
+  void evalGradient(const Eigen::VectorXd& /*_x*/,
                     Eigen::Map<Eigen::VectorXd> _grad) override final
   {
     _grad.setZero();
@@ -671,6 +671,13 @@ public:
     mIK->setDofs(indices);
   }
 
+  void setTau(double tau) override final
+  {
+    mTau = tau;
+
+    mIK->clearCaches();
+  }
+
   double eval(const Eigen::VectorXd& _x) override final
   {
     Eigen::Vector6d screw;
@@ -679,8 +686,16 @@ public:
 
     Eigen::Isometry3d tf(Eigen::Isometry3d::Identity());
     // TODO: Find out how to convert the screw into an Isometry3d
+    tf.translate(screw.head<3>());
+    for(size_t i=0; i < 3; ++i)
+    {
+      double angle = screw[i+3];
+      Eigen::Vector3d axis(Eigen::Vector3d::Zero());
+      axis[i] = 1.0;
+      tf.rotate(Eigen::AngleAxisd(angle, axis));
+    }
 
-    mIK->getTarget()->setTransform(tf);
+    mIK->getTarget()->setRelativeTransform(tf);
 
     const Eigen::Vector6d& error = mIK->getErrorMethod().evalError(_x);
     return error.norm();
@@ -781,14 +796,6 @@ Eigen::VectorXd solve(const std::shared_ptr<Solver>& solver,
         std::cerr << "Cost of (" << i+1 << "): " << cost << std::endl;
     }
   }
-  else
-  {
-    const std::shared_ptr<Problem> problem = solver->getProblem();
-    for(size_t i=0; i < problem->getNumEqConstraints(); ++i)
-    {
-      const FunctionPtr& f = problem->getEqConstraint(i);
-    }
-  }
 
   return solver->getProblem()->getOptimalSolution();
 }
@@ -884,6 +891,22 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
   system->setEqn(index, terms, alphas);\
 }
 
+#define ADD_DOUBLE_SUPPORT_OUTPUT( index1, index2, index3, index4, index5, index6, body )\
+{\
+  JacobianNode* ee = body;\
+  std::vector<Eigen::VectorXd> alphaArray;\
+  alphaArray.push_back(getAlphas(a, index1-1));\
+  alphaArray.push_back(getAlphas(a, index2-1));\
+  alphaArray.push_back(getAlphas(a, index3-1));\
+  alphaArray.push_back(getAlphas(a, index4-1));\
+  alphaArray.push_back(getAlphas(a, index5-1));\
+  std::shared_ptr<EndEffectorConstraint> f =\
+      std::make_shared<EndEffectorConstraint>(ee, alphaArray);\
+  bezierFuncs.push_back(f);\
+  problem->addEqConstraint(f);\
+}
+
+
 #define ADD_SWING_FOOT_ORIENTATION_OUTPUT( index1, index2, index3, body )\
 {\
   JacobianNode* ee = body;\
@@ -894,12 +917,8 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
   alphaArray.push_back(getAlphas(a, index1-1));\
   alphaArray.push_back(getAlphas(a, index2-1));\
   alphaArray.push_back(getAlphas(a, index3-1));\
-  std::vector<size_t> ignoreDofs;\
-  ignoreDofs.push_back(hubo->getDof(sw+"HP")->getIndexInSkeleton());\
-  ignoreDofs.push_back(hubo->getDof(sw+"HR")->getIndexInSkeleton());\
-  ignoreDofs.push_back(hubo->getDof(sw+"KP")->getIndexInSkeleton());\
   std::shared_ptr<EndEffectorConstraint> f =\
-      std::make_shared<EndEffectorConstraint>(ee, alphaArray/*, ignoreDofs*/);\
+      std::make_shared<EndEffectorConstraint>(ee, alphaArray);\
   f->mIK->getErrorMethod().setLinearBounds(\
       Eigen::Vector3d::Constant(-std::numeric_limits<double>::infinity()),\
       Eigen::Vector3d::Constant( std::numeric_limits<double>::infinity()));\
@@ -931,7 +950,8 @@ double computeP(double t, double p0, double pdot0, double vd)
 
 std::vector<Eigen::VectorXd> setupAndSolveProblem(
     const SkeletonPtr& hubo, YAML::Node params,
-    const std::string& st/*ance*/, const std::string& sw/*ing*/)
+    const std::string& st/*ance*/, const std::string& sw/*ing*/,
+    bool double_support = false)
 {
   Eigen::VectorXd lastPositions = hubo->getPositions();
   hubo->resetPositions();
@@ -1018,7 +1038,6 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   ADD_LINEAR_OUTPUT(18, make_terms(hubo, 1.0, sw+"WY"));
   ADD_LINEAR_OUTPUT(19, make_terms(hubo, 1.0, sw+"WP"));
   ADD_LINEAR_OUTPUT(20, make_terms(hubo, 1.0, sw+"WR"));
-  ADD_LINEAR_OUTPUT(21, make_terms(hubo, 1.0, sw+"KP"));
 
 //  BodyNode* knee = hubo->getBodyNode("Body_"+st+"KP");
 //  double thighLength = std::abs(knee->getRelativeTransform().translation()[2]);
@@ -1033,21 +1052,30 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 //  std::cout << "calf: " << calfLength << std::endl;
 //  double legRatio = calfLength/(thighLength+calfLength);
   double legRatio = calfLength/(thighLength+calfLength+hLength);
-  ADD_LINEAR_OUTPUT(22, make_terms(hubo, -1.0, st+"AP", -1.0, st+"KP", -1.0, st+"HP",
-                                   1.0, sw+"HP", legRatio, sw+"KP"));
-
-  ADD_LINEAR_OUTPUT(23, make_terms(hubo, 1.0, st+"HR", -1.0, sw+"HR"));
-
-  system->setTauSatisfaction(
-        make_terms(hubo, -calfLength-thighLength, st+"AP",
-                                    -thighLength, st+"KP"),
-        p_plus, p_minus);
 
   std::shared_ptr<Holonomic> h = std::make_shared<Holonomic>(
         hubo->getBodyNode("Body_"+st+"AR"));
   problem->addEqConstraint(h);
 
-  ADD_SWING_FOOT_ORIENTATION_OUTPUT( 24, 25, 26, hubo->getBodyNode("Body_"+sw+"AR") );
+  if(double_support)
+  {
+    ADD_DOUBLE_SUPPORT_OUTPUT(21, 22, 23, 24, 25, 26, hubo->getBodyNode("Body_"+sw+"AR"));
+  }
+  else
+  {
+    ADD_LINEAR_OUTPUT(21, make_terms(hubo, 1.0, sw+"KP"));
+    ADD_LINEAR_OUTPUT(22, make_terms(hubo, -1.0, st+"AP", -1.0, st+"KP", -1.0, st+"HP",
+                                     1.0, sw+"HP", legRatio, sw+"KP"));
+
+    ADD_LINEAR_OUTPUT(23, make_terms(hubo, 1.0, st+"HR", -1.0, sw+"HR"));
+
+    ADD_SWING_FOOT_ORIENTATION_OUTPUT( 24, 25, 26, hubo->getBodyNode("Body_"+sw+"AR") );
+  }
+
+  system->setTauSatisfaction(
+        make_terms(hubo, -calfLength-thighLength, st+"AP",
+                                    -thighLength, st+"KP"),
+        p_plus, p_minus);
 
   std::cout << "thigh: " << thighLength << "\n" << "calf: " << calfLength << std::endl;
 
@@ -1072,7 +1100,6 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   std::cout << "\n\n" << st << " Foot Trajectory (p0 " << p0 << ") :\n";
   double time = 0.0;
   double tau = 0.0;
-  double lastTau = 0.0;
   do
   {
     double p = computeP(time, p0, pdot0, vd);
@@ -1087,14 +1114,8 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
 //    double actualP = computeP(hubo, st, thighLength, calfLength);
 //    double actualTau = (actualP - p_plus)/(p_minus - p_plus);
-
 //    std::cout << "tau: " << tau << " \t actualTau: " << actualTau
 //              << " \t p: " << p << " \t actualP: " << actualP << std::endl;
-
-//    if(std::abs(tau-lastTau) < 1e-6)
-//      break;
-
-    lastTau = tau;
 
     time += hubo->getTimeStep();
 
@@ -1230,11 +1251,11 @@ int main()
     timer.setStartTick();
 
     bool startWithLeft = true;
-//    startWithLeft = false;
+    startWithLeft = false;
 
     std::vector<Eigen::VectorXd> leftStart;
     if(startWithLeft)
-      leftStart = setupAndSolveProblem(hubo, leftStartParams, "L", "R");
+      leftStart = setupAndSolveProblem(hubo, leftStartParams, "L", "R", true);
 
     std::vector<Eigen::VectorXd> rightWalk =
         setupAndSolveProblem(hubo, rightWalkParams, "R", "L");
