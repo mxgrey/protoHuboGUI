@@ -819,10 +819,13 @@ public:
 
   void customPreRefresh() override
   {
-    if(mTrajectory.size() == 0 && count == 0)
+    if(mTrajectory.size() == 0)
     {
-      std::cerr << "No trajectory was generated!" << std::endl;
-      ++count;
+      if(firstLoop)
+      {
+        std::cerr << "No trajectory was generated!" << std::endl;
+        firstLoop = false;
+      }
       return;
     }
 
