@@ -891,7 +891,7 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
   system->setEqn(index, terms, alphas);\
 }
 
-#define ADD_DOUBLE_SUPPORT_OUTPUT( index1, index2, index3, index4, index5, index6, body )\
+#define ADD_DOUBLE_SUPPORT_OUTPUT( index1, index2, index3, index4, index5, index6, body, relativeTo )\
 {\
   JacobianNode* ee = body;\
   std::vector<Eigen::VectorXd> alphaArray;\
@@ -902,6 +902,7 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
   alphaArray.push_back(getAlphas(a, index5-1));\
   std::shared_ptr<EndEffectorConstraint> f =\
       std::make_shared<EndEffectorConstraint>(ee, alphaArray);\
+  f->mIK->getTarget()->setParentFrame(relativeTo);\
   bezierFuncs.push_back(f);\
   problem->addEqConstraint(f);\
 }
@@ -1024,7 +1025,6 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   ADD_LINEAR_OUTPUT(6,  make_terms(hubo, 1.0, st+"SP"));
   ADD_LINEAR_OUTPUT(7,  make_terms(hubo, 1.0, st+"SR"));
   ADD_LINEAR_OUTPUT(8,  make_terms(hubo, 1.0, st+"SY"));
-//  ZERO_OUT_ALPHAS(9);
   ADD_LINEAR_OUTPUT(9,  make_terms(hubo, 1.0, st+"EP"));
   ADD_LINEAR_OUTPUT(10, make_terms(hubo, 1.0, st+"WY"));
   ADD_LINEAR_OUTPUT(11, make_terms(hubo, 1.0, st+"WP"));
@@ -1033,7 +1033,6 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   ADD_LINEAR_OUTPUT(14, make_terms(hubo, 1.0, sw+"SP"));
   ADD_LINEAR_OUTPUT(15, make_terms(hubo, 1.0, sw+"SR"));
   ADD_LINEAR_OUTPUT(16, make_terms(hubo, 1.0, sw+"SY"));
-//  ZERO_OUT_ALPHAS(17);
   ADD_LINEAR_OUTPUT(17, make_terms(hubo, 1.0, sw+"EP"));
   ADD_LINEAR_OUTPUT(18, make_terms(hubo, 1.0, sw+"WY"));
   ADD_LINEAR_OUTPUT(19, make_terms(hubo, 1.0, sw+"WP"));
@@ -1059,7 +1058,9 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
   if(double_support)
   {
-    ADD_DOUBLE_SUPPORT_OUTPUT(21, 22, 23, 24, 25, 26, hubo->getBodyNode("Body_"+sw+"AR"));
+    ADD_DOUBLE_SUPPORT_OUTPUT(21, 22, 23, 24, 25, 26,
+                              hubo->getBodyNode("Body_"+sw+"AR"),
+                              hubo->getBodyNode("Body_"+st+"AR"));
   }
   else
   {
