@@ -1065,8 +1065,8 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
   hubo->setPositions(lastPositions);
 
-//  double p0 = params["p"][1].as<double>();
-  double p0 = params["p0"].as<double>();
+  double p0 = params["p"][1].as<double>();
+//  double p0 = params["p0"].as<double>();
 
   YAML::Node pdot0_node = params["pdot0"];
   double pdot0 = pdot0_node? pdot0_node.as<double>() : 0.0;
@@ -1087,14 +1087,14 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
     trajectory.push_back(solve(solver, bezierFuncs, tau));
 
-//    double actualP = computeP(hubo, st, thighLength, calfLength);
-//    double actualTau = (actualP - p_plus)/(p_minus - p_plus);
+    double actualP = computeP(hubo, st, thighLength, calfLength);
+    double actualTau = (actualP - p_plus)/(p_minus - p_plus);
 
-//    std::cout << "tau: " << tau << " \t actualTau: " << actualTau
-//              << " \t p: " << p << " \t actualP: " << actualP << std::endl;
+    std::cout << "tau: " << tau << " \t actualTau: " << actualTau
+              << " \t p: " << p << " \t actualP: " << actualP << std::endl;
 
-    if(std::abs(tau-lastTau) < 1e-6)
-      break;
+//    if(std::abs(tau-lastTau) < 1e-6)
+//      break;
 
     lastTau = tau;
 
@@ -1232,7 +1232,7 @@ int main()
     timer.setStartTick();
 
     bool startWithLeft = true;
-    startWithLeft = false;
+//    startWithLeft = false;
 
     std::vector<Eigen::VectorXd> leftStart;
     if(startWithLeft)
