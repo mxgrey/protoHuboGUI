@@ -922,27 +922,20 @@ double computeP(const SkeletonPtr& hubo, const std::string& st,
                      -hubo->getDof(st+"KP")->getPosition());
 }
 
-double computeP(const YAML::Node& params, double t, double pdot0, double vd)
+double computeP(double t, double p0, double pdot0, double vd)
 {
-  double p0 = params["p0"].as<double>();
-
   double eps = 1.0;
 
   return vd*t + p0 + ((1.0-exp(-eps*t))*pdot0 + (exp(-eps*t)-1.0)*vd)/eps;
 }
 
 std::vector<Eigen::VectorXd> setupAndSolveProblem(
-    const SkeletonPtr& hubo, const std::string& file,
-    const std::string& st/*ance*/, const std::string& sw/*ing*/, double* pdot0, double* vd)
+    const SkeletonPtr& hubo, YAML::Node params,
+    const std::string& st/*ance*/, const std::string& sw/*ing*/)
 {
   Eigen::VectorXd lastPositions = hubo->getPositions();
   hubo->resetPositions();
 
-  // Start by testing left stance leg
-  YAML::Node config = YAML::LoadFile(file);
-
-  YAML::Node domain = config["domain"];
-  YAML::Node params = st == "L"? domain[1] : domain[0];
   double p_plus = params["p"][1].as<double>();
   double p_minus = params["p"][0].as<double>();
 
@@ -1072,16 +1065,19 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
   hubo->setPositions(lastPositions);
 
+//  double p0 = params["p"][1].as<double>();
   double p0 = params["p0"].as<double>();
+
+  YAML::Node pdot0_node = params["pdot0"];
+  double pdot0 = pdot0_node? pdot0_node.as<double>() : 0.0;
+  double vd = params["v"].as<double>();
   std::cout << "\n\n" << st << " Foot Trajectory (p0 " << p0 << ") :\n";
   double time = 0.0;
   double tau = 0.0;
   double lastTau = 0.0;
   do
   {
-    double p = computeP(params, time,
-                        pdot0==nullptr? params["pdot0"].as<double>() : *pdot0,
-                        vd==nullptr? params["v"].as<double>() : *vd);
+    double p = computeP(time, p0, pdot0, vd);
     tau = (p - p_plus)/(p_minus - p_plus);
     if(tau > 1.0)
     {
@@ -1168,22 +1164,20 @@ int main()
   world->addSkeleton(hubo);
   world->setTimeStep(1.0/200.0);
 
-  std::cout << "13: " << hubo->getDof(13)->getName() << "\n"
-            << "14: " << hubo->getDof(14)->getName() << std::endl;
-
 //  std::string file = "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
-  std::string yaml = "/home/grey/projects/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
+//  std::string yaml = "/home/grey/projects/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
+  std::string yaml = "/home/grey/projects/protoHuboGUI/params_2015-09-01T15-35-0400.yaml";
 
   bool loadfile = false;
 //  loadfile = true;
 
-  std::string filename = "/home/grey/projects/protoHuboGUI/trajectory.dat";
+  std::string dump_name = "/home/grey/projects/protoHuboGUI/trajectory.dat";
 
   std::vector<Eigen::VectorXd> raw_trajectory;
   if(loadfile)
   {
     std::ifstream file;
-    file.open(filename);
+    file.open(dump_name);
     if(file.is_open())
     {
       while(!file.eof())
@@ -1196,40 +1190,78 @@ int main()
     }
     else
     {
-      std::cerr << "Could not open file: " << filename << std::endl;
+      std::cerr << "Could not open file: " << dump_name << std::endl;
     }
   }
   else
   {
+    // Start by testing left stance leg
+    YAML::Node config = YAML::LoadFile(yaml);
+    YAML::Node domain = config["domain"];
+
+    YAML::Node leftStartParams, leftWalkParams, rightStartParams, rightWalkParams;
+    for(size_t i=0; i < domain.size(); ++i)
+    {
+      const std::string& paramName = domain[i]["name"].as<std::string>();
+
+      if("Left3DFlatStarting" == paramName)
+      {
+        std::cout << "Found left starting params" << std::endl;
+        leftStartParams  = domain[i];
+      }
+      else if("Left3DFlatWalking" == paramName)
+      {
+        std::cout << "Found left walking params" << std::endl;
+        leftWalkParams   = domain[i];
+      }
+      else if("Right3DFlatStarting" == paramName)
+      {
+        std::cout << "Found right starting params" << std::endl;
+        rightStartParams = domain[i];
+      }
+      else if("Right3DFlatWalking" == paramName)
+      {
+        std::cout << "Found right walking params" << std::endl;
+        rightWalkParams  = domain[i];
+      }
+      else
+        std::cerr << "Unknown parameters: " << domain[i]["name"] << std::endl;
+    }
+
     osg::Timer timer;
     timer.setStartTick();
 
-    double pdot0 = 0.0;
-    double vd = 0.0;
-//    std::vector<Eigen::VectorXd> leftRamp =
-//        setupAndSolveProblem(hubo, yaml, "L", "R", &pdot0, nullptr);
-    std::vector<Eigen::VectorXd> rightStance =
-        setupAndSolveProblem(hubo, yaml, "R", "L", nullptr, nullptr);
-    std::vector<Eigen::VectorXd> leftStance =
-        setupAndSolveProblem(hubo, yaml, "L", "R", nullptr, nullptr);
-//    std::vector<Eigen::VectorXd> rightRamp =
-//        setupAndSolveProblem(hubo, yaml, "R", "L", nullptr, &vd);
+    bool startWithLeft = true;
+    startWithLeft = false;
+
+    std::vector<Eigen::VectorXd> leftStart;
+    if(startWithLeft)
+      leftStart = setupAndSolveProblem(hubo, leftStartParams, "L", "R");
+
+    std::vector<Eigen::VectorXd> rightWalk =
+        setupAndSolveProblem(hubo, rightWalkParams, "R", "L");
+    std::vector<Eigen::VectorXd> leftWalk =
+        setupAndSolveProblem(hubo, leftWalkParams, "L", "R");
 
     std::cout << "Computation Time: " << timer.time_s() << std::endl;
 
 
-//    for(const Eigen::VectorXd& pos : leftRamp)
-//      raw_trajectory.push_back(pos);
-    for(const Eigen::VectorXd& pos : rightStance)
+    if(startWithLeft)
+    {
+      for(const Eigen::VectorXd& pos : leftStart)
+        raw_trajectory.push_back(pos);
+    }
+
+    for(const Eigen::VectorXd& pos : rightWalk)
       raw_trajectory.push_back(pos);
-    for(const Eigen::VectorXd& pos : leftStance)
+    for(const Eigen::VectorXd& pos : leftWalk)
       raw_trajectory.push_back(pos);
-//    for(const Eigen::VectorXd& pos : rightRamp)
-//      raw_trajectory.push_back(pos);
+
+//    Eigen::VectorXd diff = leftStart[0] - leftWalk[0]
 
     std::cout << "Trajectory Time:  " << (double)(raw_trajectory.size())*hubo->getTimeStep() << std::endl;
 
-    dumpTrajectory(raw_trajectory, filename);
+    dumpTrajectory(raw_trajectory, dump_name);
   }
 
 

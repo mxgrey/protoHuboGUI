@@ -202,13 +202,15 @@ int main()
 
   viewer.setUpViewInWindow(0, 0, 1280, 960);
 
+  viewer.addAttachment(new osgDart::SupportPolygonVisual(hubo));
+
   // Set up the default viewing position
   viewer.getCameraManipulator()->setHomePosition(osg::Vec3( 5.34,  3.00, 1.91),
                                                  osg::Vec3( 0.00,  0.00, 0.50),
                                                  osg::Vec3(-0.20, -0.08, 0.98));
 
   viewer.setCameraManipulator(viewer.getCameraManipulator());
-  viewer.record("/home/grey/dump");
+//  viewer.record("/home/grey/dump");
 
   viewer.run();
 }
