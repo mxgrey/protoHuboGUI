@@ -1004,9 +1004,8 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   ADD_LINEAR_OUTPUT(6,  make_terms(hubo, 1.0, st+"SP"));
   ADD_LINEAR_OUTPUT(7,  make_terms(hubo, 1.0, st+"SR"));
   ADD_LINEAR_OUTPUT(8,  make_terms(hubo, 1.0, st+"SY"));
-  ZERO_OUT_ALPHAS(9);
+//  ZERO_OUT_ALPHAS(9);
   ADD_LINEAR_OUTPUT(9,  make_terms(hubo, 1.0, st+"EP"));
-//  ADD_LINEAR_OUTPUT(24,  make_terms(hubo, 1.0, st+"EP"));
   ADD_LINEAR_OUTPUT(10, make_terms(hubo, 1.0, st+"WY"));
   ADD_LINEAR_OUTPUT(11, make_terms(hubo, 1.0, st+"WP"));
   ADD_LINEAR_OUTPUT(12, make_terms(hubo, 1.0, st+"WR"));
@@ -1014,9 +1013,8 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   ADD_LINEAR_OUTPUT(14, make_terms(hubo, 1.0, sw+"SP"));
   ADD_LINEAR_OUTPUT(15, make_terms(hubo, 1.0, sw+"SR"));
   ADD_LINEAR_OUTPUT(16, make_terms(hubo, 1.0, sw+"SY"));
-  ZERO_OUT_ALPHAS(17);
+//  ZERO_OUT_ALPHAS(17);
   ADD_LINEAR_OUTPUT(17, make_terms(hubo, 1.0, sw+"EP"));
-//  ADD_LINEAR_OUTPUT(24, make_terms(hubo, 1.0, sw+"EP"));
   ADD_LINEAR_OUTPUT(18, make_terms(hubo, 1.0, sw+"WY"));
   ADD_LINEAR_OUTPUT(19, make_terms(hubo, 1.0, sw+"WP"));
   ADD_LINEAR_OUTPUT(20, make_terms(hubo, 1.0, sw+"WR"));
@@ -1087,11 +1085,11 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
     trajectory.push_back(solve(solver, bezierFuncs, tau));
 
-    double actualP = computeP(hubo, st, thighLength, calfLength);
-    double actualTau = (actualP - p_plus)/(p_minus - p_plus);
+//    double actualP = computeP(hubo, st, thighLength, calfLength);
+//    double actualTau = (actualP - p_plus)/(p_minus - p_plus);
 
-    std::cout << "tau: " << tau << " \t actualTau: " << actualTau
-              << " \t p: " << p << " \t actualP: " << actualP << std::endl;
+//    std::cout << "tau: " << tau << " \t actualTau: " << actualTau
+//              << " \t p: " << p << " \t actualP: " << actualP << std::endl;
 
 //    if(std::abs(tau-lastTau) < 1e-6)
 //      break;
