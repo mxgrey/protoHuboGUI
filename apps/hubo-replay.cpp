@@ -38,6 +38,8 @@
 
 #include <osg/Timer>
 
+const double frequency = 1000.0;
+
 using namespace dart::dynamics;
 using namespace dart::simulation;
 using namespace osgDart;
@@ -63,15 +65,20 @@ public:
       return;
 
     double time = mWorld->getTime() - t0;
-    size_t index = floor(200*(time - t0));
+    size_t bot_index = floor(frequency*time);
+    size_t top_index = ceil(frequency*time);
+    double t = time - (double)(bot_index)/frequency;
 
-    if(index >= mTrajectory.size())
-      return;
+    if(top_index >= mTrajectory.size()-1)
+    {
+//      return;
+      top_index = mTrajectory.size()-2;
+      bot_index = mTrajectory.size()-2;
+    }
 
+    std::cout << "Index: " << top_index << std::endl;
 
-    std::cout << "Index: " << index << std::endl;
-
-    const Eigen::VectorXd& qd = mTrajectory[index];
+    const Eigen::VectorXd qd = (mTrajectory[top_index]-mTrajectory[bot_index])*t + mTrajectory[bot_index];
     for(size_t j=6; j < mHubo->getNumDofs(); ++j)
     {
       DegreeOfFreedom* dof = mHubo->getDof(j);
@@ -81,11 +88,10 @@ public:
       dof->setCommand(velocity);
     }
 
+//    ++index;
   }
 
 protected:
-
-  const double frequency = 200;
 
   SkeletonPtr mHubo;
 
@@ -162,7 +168,7 @@ SkeletonPtr createGround()
 int main()
 {
   WorldPtr world(new dart::simulation::World);
-//  world->setTimeStep(1.0/200.0);
+  world->setTimeStep(1.0/frequency);
 
   SkeletonPtr hubo = createHubo();
   world->addSkeleton(hubo);
