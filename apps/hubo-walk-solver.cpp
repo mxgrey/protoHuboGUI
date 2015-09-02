@@ -46,6 +46,8 @@
 using namespace dart::dynamics;
 using namespace dart::optimizer;
 
+const double frequency = 1000.0;
+
 //static double sign(double value)
 //{
 //  return value > 0? 1.0 : (value < 0? -1.0 : 0.0);
@@ -806,11 +808,13 @@ public:
 
   TrajectoryDisplayWorld(dart::simulation::WorldPtr world,
                          const std::vector<Eigen::VectorXd>& traj)
-    : osgDart::WorldNode(world), mTrajectory(traj), count(0)
+    : osgDart::WorldNode(world), mTrajectory(traj)
   {
     hubo = world->getSkeleton(0);
     LSR = hubo->getDof("LSR")->getIndexInSkeleton();
     RSR = hubo->getDof("RSR")->getIndexInSkeleton();
+
+    firstLoop = true;
   }
 
   void customPreRefresh() override
@@ -822,12 +826,16 @@ public:
       return;
     }
 
-//    Eigen::VectorXd positions = mTrajectory[count];
-//    positions[LSR] += 90.0*M_PI/180.0;
-//    positions[RSR] -= 90.0*M_PI/180.0;
+    if(firstLoop)
+    {
+      mTimer.setStartTick();
+      firstLoop = false;
+    }
 
+    double time = mTimer.time_s();
+    size_t count = (size_t)(floor(frequency*time)) % mTrajectory.size();
 
-    double dt = mWorld->getTimeStep();
+    double dt = 1.0/frequency;
 
     size_t last_1 = count <= 0? 0 : count - 1;
     size_t last_2 = count <= 1? 0 : count - 2;
@@ -859,19 +867,17 @@ public:
 
 //    hubo->setPositions(mMapping, positions);
 //    clone->setPositions(mMapping, mRaw[count]);
-
-    ++count;
-    if(count >= mTrajectory.size())
-      count = 0;
   }
 
 protected:
 
   SkeletonPtr hubo;
   std::vector<Eigen::VectorXd> mTrajectory;
-  size_t count;
   size_t LSR;
   size_t RSR;
+
+  bool firstLoop;
+  osg::Timer mTimer;
 };
 
 Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
@@ -1182,7 +1188,7 @@ int main()
   dart::simulation::WorldPtr world = std::make_shared<dart::simulation::World>();
   SkeletonPtr hubo = createHubo();
   world->addSkeleton(hubo);
-  world->setTimeStep(1.0/200.0);
+  world->setTimeStep(1.0/frequency);
 
 //  std::string file = "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
 //  std::string yaml = "/home/grey/projects/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";

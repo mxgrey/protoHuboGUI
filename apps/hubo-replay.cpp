@@ -38,6 +38,8 @@
 
 #include <osg/Timer>
 
+const double frequency = 1000.0;
+
 using namespace dart::dynamics;
 using namespace dart::simulation;
 using namespace osgDart;
@@ -63,16 +65,15 @@ public:
       return;
 
     double time = mWorld->getTime() - t0;
-    const double frequency = 200.0;
     size_t bot_index = floor(frequency*time);
     size_t top_index = ceil(frequency*time);
     double t = time - (double)(bot_index)/frequency;
 
-    if(top_index >= mTrajectory.size())
+    if(top_index >= mTrajectory.size()-1)
     {
 //      return;
-      top_index = mTrajectory.size()-1;
-      bot_index = mTrajectory.size()-1;
+      top_index = mTrajectory.size()-2;
+      bot_index = mTrajectory.size()-2;
     }
 
     std::cout << "Index: " << top_index << std::endl;
@@ -91,8 +92,6 @@ public:
   }
 
 protected:
-
-  const double frequency = 200;
 
   SkeletonPtr mHubo;
 
@@ -169,7 +168,7 @@ SkeletonPtr createGround()
 int main()
 {
   WorldPtr world(new dart::simulation::World);
-//  world->setTimeStep(1.0/200.0);
+  world->setTimeStep(1.0/frequency);
 
   SkeletonPtr hubo = createHubo();
   world->addSkeleton(hubo);
