@@ -68,10 +68,6 @@ public:
     if(index >= mTrajectory.size())
       return;
 
-    if(index == 0)
-    {
-//      Eigen::Vector6d vel = mHubo->getBodyNode("Body_LAR");
-    }
 
     std::cout << "Index: " << index << std::endl;
 
@@ -85,7 +81,6 @@ public:
       dof->setCommand(velocity);
     }
 
-//    ++index;
   }
 
 protected:
@@ -173,7 +168,7 @@ int main()
   world->addSkeleton(hubo);
   world->addSkeleton(createGround());
 
-  std::string name = "/home/grey/projects/protoHuboGUI/trajectory.dat";
+  std::string name = "/home/ayonga/protoHuboGUI/trajectory.dat";
 
   std::ifstream file;
   file.open(name);
@@ -210,7 +205,7 @@ int main()
                                                  osg::Vec3(-0.20, -0.08, 0.98));
 
   viewer.setCameraManipulator(viewer.getCameraManipulator());
-//  viewer.record("/home/grey/dump");
+//  viewer.record("/home/ayonga/dump");
 
   viewer.run();
 }

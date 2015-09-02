@@ -909,7 +909,7 @@ public:
 
   void loadTrajectory()
   {
-    std::string filename = "/home/grey/projects/protoHuboGUI/trajectory.dat";
+    std::string filename = "/home/ayonga/protoHuboGUI/trajectory.dat";
 
     std::vector<Eigen::VectorXd> raw_trajectory;
     std::ifstream file;

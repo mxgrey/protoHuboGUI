@@ -1063,11 +1063,12 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
   hubo->setPositions(lastPositions);
 
-  double p0 = params["p"][1].as<double>();
-//  double p0 = params["p0"].as<double>();
+//  double p0 = params["p"][1].as<double>();
+  double p0 = params["p0"].as<double>();
 
   YAML::Node pdot0_node = params["pdot0"];
   double pdot0 = pdot0_node? pdot0_node.as<double>() : 0.0;
+
   double vd = params["v"].as<double>();
   std::cout << "\n\n" << st << " Foot Trajectory (p0 " << p0 << ") :\n";
   double time = 0.0;
@@ -1162,14 +1163,15 @@ int main()
   world->addSkeleton(hubo);
   world->setTimeStep(1.0/200.0);
 
-//  std::string file = "/home/grey/projects/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
-//  std::string yaml = "/home/grey/projects/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
-  std::string yaml = "/home/grey/projects/protoHuboGUI/params_2015-09-01T15-35-0400.yaml";
+//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
+//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
+//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-01T15-35-0400.yaml";
+  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-02T02-06-0400.yaml";
 
   bool loadfile = false;
 //  loadfile = true;
 
-  std::string dump_name = "/home/grey/projects/protoHuboGUI/trajectory.dat";
+  std::string dump_name = "/home/ayonga/protoHuboGUI/trajectory.dat";
 
   std::vector<Eigen::VectorXd> raw_trajectory;
   if(loadfile)
@@ -1230,7 +1232,7 @@ int main()
     timer.setStartTick();
 
     bool startWithLeft = true;
-//    startWithLeft = false;
+    startWithLeft = false;
 
     std::vector<Eigen::VectorXd> leftStart;
     if(startWithLeft)
@@ -1308,11 +1310,14 @@ int main()
     osgDart::Viewer viewer;
     viewer.addWorldNode(display);
     viewer.allowSimulation(false);
-//    viewer.record("/home/grey/dump/");
+    viewer.record("/home/ayonga/dump/");
 
-//    osg::ref_ptr<osgDart::SupportPolygonVisual> support =
-//        new osgDart::SupportPolygonVisual(hubo);
-    viewer.addAttachment(new osgDart::SupportPolygonVisual(hubo, -0.97+0.02));
+    osg::ref_ptr<osgDart::SupportPolygonVisual> support_vis =
+            new osgDart::SupportPolygonVisual(hubo, -0.97+0.02);
+    double sphere_size = 0.05;
+    support_vis->setCenterOfMassRadius(sphere_size);
+    support_vis->setZeroMomentPointRadius(sphere_size);
+    viewer.addAttachment(support_vis);
 
     viewer.setUpViewInWindow(0, 0, 1280, 960);
 
