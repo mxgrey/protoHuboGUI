@@ -63,19 +63,21 @@ public:
       return;
 
     double time = mWorld->getTime() - t0;
-    size_t index = floor(200*(time - t0));
+    const double frequency = 200.0;
+    size_t bot_index = floor(frequency*time);
+    size_t top_index = ceil(frequency*time);
+    double t = time - (double)(bot_index)/frequency;
 
-    if(index >= mTrajectory.size())
-      return;
-
-    if(index == 0)
+    if(top_index >= mTrajectory.size())
     {
-//      Eigen::Vector6d vel = mHubo->getBodyNode("Body_LAR");
+//      return;
+      top_index = mTrajectory.size()-1;
+      bot_index = mTrajectory.size()-1;
     }
 
-    std::cout << "Index: " << index << std::endl;
+    std::cout << "Index: " << top_index << std::endl;
 
-    const Eigen::VectorXd& qd = mTrajectory[index];
+    const Eigen::VectorXd qd = (mTrajectory[top_index]-mTrajectory[bot_index])*t + mTrajectory[bot_index];
     for(size_t j=6; j < mHubo->getNumDofs(); ++j)
     {
       DegreeOfFreedom* dof = mHubo->getDof(j);
