@@ -909,6 +909,7 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
   alphaArray.push_back(getAlphas(a, index3-1));\
   alphaArray.push_back(getAlphas(a, index4-1));\
   alphaArray.push_back(getAlphas(a, index5-1));\
+  alphaArray.push_back(getAlphas(a, index6-1));\
   std::shared_ptr<EndEffectorConstraint> f =\
       std::make_shared<EndEffectorConstraint>(ee, alphaArray);\
   f->mIK->getTarget()->setParentFrame(relativeTo);\
@@ -1197,7 +1198,8 @@ int main()
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-01T15-35-0400.yaml";
-  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-02T02-06-0400.yaml";
+//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-02T02-06-0400.yaml";
+  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-03T01-51-0400.yaml";
 
   bool loadfile = false;
 //  loadfile = true;
@@ -1230,25 +1232,35 @@ int main()
     YAML::Node config = YAML::LoadFile(yaml);
     YAML::Node domain = config["domain"];
 
-    YAML::Node leftStartParams, leftWalkParams, rightStartParams, rightWalkParams;
+    YAML::Node leftStartDSParams, leftStartSSParams, leftWalkParams, rightStartDSParams, rightStartSSParams, rightWalkParams;
     for(size_t i=0; i < domain.size(); ++i)
     {
       const std::string& paramName = domain[i]["name"].as<std::string>();
 
-      if("Left3DFlatStarting" == paramName)
+      if("LeftDS3DFlatStarting" == paramName)
       {
-        std::cout << "Found left starting params" << std::endl;
-        leftStartParams  = domain[i];
+        std::cout << "Found left starting double support phase params" << std::endl;
+        leftStartDSParams  = domain[i];
+      }
+      else if("LeftSS3DFlatStarting" == paramName)
+      {
+        std::cout << "Found left starting single support phase params" << std::endl;
+        leftStartSSParams  = domain[i];
       }
       else if("Left3DFlatWalking" == paramName)
       {
         std::cout << "Found left walking params" << std::endl;
         leftWalkParams   = domain[i];
       }
-      else if("Right3DFlatStarting" == paramName)
+      else if("RightDS3DFlatStarting" == paramName)
       {
-        std::cout << "Found right starting params" << std::endl;
-        rightStartParams = domain[i];
+        std::cout << "Found right starting double support phases params" << std::endl;
+        rightStartDSParams = domain[i];
+      }
+      else if("RightSS3DFlatStarting" == paramName)
+      {
+        std::cout << "Found right starting single support phases params" << std::endl;
+        rightStartSSParams = domain[i];
       }
       else if("Right3DFlatWalking" == paramName)
       {
@@ -1263,11 +1275,15 @@ int main()
     timer.setStartTick();
 
     bool startWithLeft = true;
-    startWithLeft = false;
+    startWithLeft = true;
 
-    std::vector<Eigen::VectorXd> leftStart;
+    std::vector<Eigen::VectorXd> leftStartDS;
+    std::vector<Eigen::VectorXd> leftStartSS;
     if(startWithLeft)
-      leftStart = setupAndSolveProblem(hubo, leftStartParams, "L", "R", true);
+    {
+      leftStartDS = setupAndSolveProblem(hubo, leftStartDSParams, "L", "R", true);
+      leftStartSS = setupAndSolveProblem(hubo, leftStartSSParams, "L", "R", false);
+    }
 
     std::vector<Eigen::VectorXd> rightWalk =
         setupAndSolveProblem(hubo, rightWalkParams, "R", "L");
@@ -1279,7 +1295,9 @@ int main()
 
     if(startWithLeft)
     {
-      for(const Eigen::VectorXd& pos : leftStart)
+      for(const Eigen::VectorXd& pos : leftStartDS)
+        raw_trajectory.push_back(pos);
+      for(const Eigen::VectorXd& pos : leftStartSS)
         raw_trajectory.push_back(pos);
     }
 
