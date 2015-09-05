@@ -959,6 +959,7 @@ double computeP(double t, double p0, double pdot0, double vd)
   return vd*t + p0 + ((1.0-exp(-eps*t))*pdot0 + (exp(-eps*t)-1.0)*vd)/eps;
 }
 
+template<int eqns, int dofs>
 std::vector<Eigen::VectorXd> setupAndSolveProblem(
     const SkeletonPtr& hubo, YAML::Node params,
     const std::string& st/*ance*/, const std::string& sw/*ing*/,
@@ -1022,8 +1023,10 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   problem->setLowerBounds(lower);
   problem->setUpperBounds(upper);
 
-  std::shared_ptr<LinearComboSystem<24,33>> system =
-      std::make_shared<LinearComboSystem<24,33>>();
+
+
+  std::shared_ptr<LinearComboSystem<eqns,dofs>> system =
+      std::make_shared<LinearComboSystem<eqns,dofs>>();
   problem->addEqConstraint(system);
   bezierFuncs.push_back(system);
 
@@ -1198,7 +1201,7 @@ int main()
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-01T15-35-0400.yaml";
-//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-02T02-06-0400.yaml";
+// std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-02T02-06-0400.yaml";
   std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-03T01-51-0400.yaml";
 
   bool loadfile = false;
@@ -1281,14 +1284,14 @@ int main()
     std::vector<Eigen::VectorXd> leftStartSS;
     if(startWithLeft)
     {
-      leftStartDS = setupAndSolveProblem(hubo, leftStartDSParams, "L", "R", true);
-      leftStartSS = setupAndSolveProblem(hubo, leftStartSSParams, "L", "R", false);
+      leftStartDS = setupAndSolveProblem<21,33>(hubo, leftStartDSParams, "L", "R", true);
+      leftStartSS = setupAndSolveProblem<24,33>(hubo, leftStartSSParams, "L", "R", false);
     }
 
     std::vector<Eigen::VectorXd> rightWalk =
-        setupAndSolveProblem(hubo, rightWalkParams, "R", "L");
+        setupAndSolveProblem<24,33>(hubo, rightWalkParams, "R", "L");
     std::vector<Eigen::VectorXd> leftWalk =
-        setupAndSolveProblem(hubo, leftWalkParams, "L", "R");
+        setupAndSolveProblem<24,33>(hubo, leftWalkParams, "L", "R");
 
     std::cout << "Computation Time: " << timer.time_s() << std::endl;
 
