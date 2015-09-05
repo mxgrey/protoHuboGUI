@@ -1115,11 +1115,19 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   std::cout << "\n\n" << st << " Foot Trajectory (p0 " << p0 << ") :\n";
   double time = 0.0;
   double tau = 0.0;
+  double tau_max = 0.9925;
+
+  if(double_support)
+  {
+      double pf = params["p"][2].as<double>();
+      tau_max = (pf - p_plus)/(p_minus - p_plus);
+      std::cout<< "Tau(max):" << tau_max << "\n";
+  }
   do
   {
     double p = computeP(time, p0, pdot0, vd);
     tau = (p - p_plus)/(p_minus - p_plus);
-    if(tau > 1.0)
+    if(tau > tau_max)
     {
       std::cout << "stopping" << std::endl;
       break;
