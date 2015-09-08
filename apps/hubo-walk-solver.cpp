@@ -1115,7 +1115,7 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   std::cout << "\n\n" << st << " Foot Trajectory (p0 " << p0 << ") :\n";
   double time = 0.0;
   double tau = 0.0;
-  double tau_max = 0.9925;
+  double tau_max = 1.0;
 
   if(double_support)
   {
@@ -1209,9 +1209,9 @@ int main()
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-01T15-35-0400.yaml";
-// std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-02T02-06-0400.yaml";
-  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-03T01-51-0400.yaml";
-
+//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-02T02-06-0400.yaml";
+//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-03T01-51-0400.yaml";
+  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-07T12-50-0400.yaml";
   bool loadfile = false;
 //  loadfile = true;
 
@@ -1312,11 +1312,14 @@ int main()
         raw_trajectory.push_back(pos);
     }
 
-    for(const Eigen::VectorXd& pos : rightWalk)
-      raw_trajectory.push_back(pos);
-    for(const Eigen::VectorXd& pos : leftWalk)
-      raw_trajectory.push_back(pos);
-
+    int NumOfStep = 20;
+    for(int i=0; i < NumOfStep; i++ )
+    {
+        for(const Eigen::VectorXd& pos : rightWalk)
+          raw_trajectory.push_back(pos);
+        for(const Eigen::VectorXd& pos : leftWalk)
+          raw_trajectory.push_back(pos);
+    }
 //    Eigen::VectorXd diff = leftStart[0] - leftWalk[0]
 
     std::cout << "Trajectory Time:  " << (double)(raw_trajectory.size())*hubo->getTimeStep() << std::endl;

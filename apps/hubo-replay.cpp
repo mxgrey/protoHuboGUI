@@ -211,7 +211,7 @@ int main()
                                                  osg::Vec3(-0.20, -0.08, 0.98));
 
   viewer.setCameraManipulator(viewer.getCameraManipulator());
-//  viewer.record("/home/ayonga/dump");
+  viewer.record("/home/ayonga/dump");
 
   viewer.run();
 }
