@@ -1211,7 +1211,9 @@ int main()
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-01T15-35-0400.yaml";
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-02T02-06-0400.yaml";
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-03T01-51-0400.yaml";
-  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-07T12-50-0400.yaml";
+//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-07T12-50-0400.yaml";
+//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-08T21-24-0400.yaml";
+  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-08T20-44-0400.yaml";
   bool loadfile = false;
 //  loadfile = true;
 
@@ -1286,7 +1288,7 @@ int main()
     timer.setStartTick();
 
     bool startWithLeft = true;
-    startWithLeft = true;
+    startWithLeft = false;
 
     std::vector<Eigen::VectorXd> leftStartDS;
     std::vector<Eigen::VectorXd> leftStartSS;
