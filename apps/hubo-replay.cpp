@@ -58,7 +58,15 @@ public:
     double height = mHubo->getPosition(5);
     mHubo->setPositions(mTrajectory[0]);
     mHubo->setPosition(5, height);
-//    index = 0;
+
+    finishedDumping = false;
+    q_dump.open(PROJECT_PATH"sim/trajectory.dat");
+    vel_dump.open(PROJECT_PATH"sim/velocity.dat");
+    com_dump.open(PROJECT_PATH"sim/com.dat");
+    zmp_dump.open(PROJECT_PATH"sim/zmp.dat");
+    time_dump.open(PROJECT_PATH"sim/time.dat");
+    std::cout << "Dumping trajectory data... ";
+    std::cout << std::flush;
   }
 
   void customPreStep() override
@@ -78,7 +86,7 @@ public:
       bot_index = mTrajectory.size()-2;
     }
 
-    std::cout << "Index: " << top_index << std::endl;
+//    std::cout << "Index: " << top_index << std::endl;
 
     const Eigen::VectorXd qd = (mTrajectory[top_index]-mTrajectory[bot_index])*t + mTrajectory[bot_index];
     for(size_t j=6; j < mHubo->getNumDofs(); ++j)
@@ -90,10 +98,67 @@ public:
       dof->setCommand(velocity);
     }
 
-//    ++index;
+  }
+
+  void customPostStep() override
+  {
+    if(mWorld->getTime() < t0)
+      return;
+
+    double traj_time = mWorld->getTime()-t0;
+
+//    std::cout << traj_time << " : " << (double)(mTrajectory.size())/(double)(frequency) << std::endl;
+
+    if(traj_time > (double)(mTrajectory.size())/(double)(frequency))
+    {
+      // If the current time exceeds the length of the trajectory, we should no
+      // longer be dumping data
+      if(!finishedDumping)
+      {
+        q_dump.close();
+        vel_dump.close();
+        com_dump.close();
+        zmp_dump.close();
+        time_dump.close();
+
+        finishedDumping = true;
+        std::cout << "finished dumping!" << std::endl;
+      }
+
+      return;
+    }
+
+//    mHubo->computeForwardDynamics();
+
+    for(size_t j=0; j < mHubo->getNumDofs(); ++j)
+    {
+      const DegreeOfFreedom* dof = mHubo->getDof(j);
+      q_dump << dof->getPosition() << "\t";
+      vel_dump << dof->getVelocity() << "\t";
+    }
+    q_dump << "\n";
+    vel_dump << "\n";
+
+    Eigen::Vector3d com = mHubo->getCOM();
+    for(size_t j=0; j < 3; ++j)
+      com_dump << com[j] << "\t";
+    com_dump << "\n";
+
+    Eigen::Vector3d zmp = mHubo->getZMP();
+    for(size_t j=0; j < 3; ++j)
+      zmp_dump << zmp[j] << "\t";
+    zmp_dump << "\n";
+
+    time_dump << traj_time << "\n";
   }
 
 protected:
+
+  std::ofstream q_dump;
+  std::ofstream vel_dump;
+  std::ofstream com_dump;
+  std::ofstream zmp_dump;
+  std::ofstream time_dump;
 
   SkeletonPtr mHubo;
 
@@ -101,7 +166,7 @@ protected:
 
   const double t0 = 1.0;
 
-//  size_t index;
+  bool finishedDumping;
 };
 
 SkeletonPtr createHubo()
@@ -176,7 +241,7 @@ int main()
   world->addSkeleton(hubo);
   world->addSkeleton(createGround());
 
-  std::string name = PROJECT_PATH"trajectory.dat";
+  std::string name = PROJECT_PATH"ideal/trajectory.dat";
 
   std::ifstream file;
   file.open(name);
@@ -213,7 +278,7 @@ int main()
                                                  osg::Vec3(-0.20, -0.08, 0.98));
 
   viewer.setCameraManipulator(viewer.getCameraManipulator());
-  viewer.record(PROJECT_PATH"dump");
+//  viewer.record(PROJECT_PATH"dump");
 
   viewer.run();
 }

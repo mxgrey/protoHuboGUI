@@ -863,28 +863,19 @@ public:
          + c[0]*mTrajectory[count]
          + c[1]*mTrajectory[last_1] + c[2]*mTrajectory[last_2] + c[3]*mTrajectory[last_3] + c[4]*mTrajectory[last_4])/pow(dt,2);
 
-
-//    accelerations.head<6>().setZero();
-
     hubo->setPositions(mTrajectory[count]);
     hubo->setVelocities(velocities);
     hubo->setAccelerations(accelerations);
-
-//    hubo->setPositions(mMapping, positions);
-//    clone->setPositions(mMapping, mRaw[count]);
   }
 
 protected:
-
-  std::ofstream vel_dump;
-  std::ofstream com_dump;
-  std::ofstream zmp_dump;
 
   SkeletonPtr hubo;
   std::vector<Eigen::VectorXd> mTrajectory;
   size_t LSR;
   size_t RSR;
 
+  bool filesClosed;
   bool firstLoop;
   osg::Timer mTimer;
 };
@@ -1188,22 +1179,99 @@ SkeletonPtr createHubo()
   return hubo;
 }
 
-void dumpTrajectory(const std::vector<Eigen::VectorXd>& traj,
-                    const std::string& file)
+void dumpDofNames(const SkeletonPtr& hubo)
 {
-  std::cout << "dumping trajectory of size " << traj.size() << " to " << file << std::endl;
-  std::ofstream dump;
-  dump.open(file, std::ofstream::out);
-  for(size_t i=0; i < traj.size(); ++i)
-  {
-    const Eigen::VectorXd& pos = traj[i];
-    for(int j=0; j < pos.size(); ++j)
-      dump << pos[j] << "\t";
-    dump << "\n";
-  }
-  dump.close();
+  std::ofstream dof_dump;
+  dof_dump.open(PROJECT_PATH"dof_names.dat", std::ofstream::out);
 
+  for(size_t i=0; i < hubo->getNumDofs(); ++i)
+  {
+    dof_dump << hubo->getDof(i)->getName() << "\t";
+  }
+  dof_dump.close();
 }
+
+void dumpAllData(const SkeletonPtr& hubo,
+                 const std::vector<Eigen::VectorXd>& mTrajectory)
+{
+  dumpDofNames(hubo);
+
+  std::cout << "Dumping data for a trajectory of size " << mTrajectory.size() << "... ";
+  std::cout << std::flush;
+  std::ofstream q_dump;
+  std::ofstream vel_dump;
+  std::ofstream com_dump;
+  std::ofstream zmp_dump;
+  std::ofstream time_dump;
+
+  q_dump.open(PROJECT_PATH"ideal/trajectory.dat", std::ofstream::out);
+  vel_dump.open(PROJECT_PATH"ideal/velocity.dat", std::ofstream::out);
+  com_dump.open(PROJECT_PATH"ideal/com.dat", std::ofstream::out);
+  zmp_dump.open(PROJECT_PATH"ideal/zmp.dat", std::ofstream::out);
+  time_dump.open(PROJECT_PATH"ideal/time.dat", std::ofstream::out);
+
+  for(size_t i=0; i < mTrajectory.size(); ++i)
+  {
+    double dt = 1.0/frequency;
+
+    size_t last_1 = i <= 0? 0 : i - 1;
+    size_t last_2 = i <= 1? 0 : i - 2;
+    size_t last_3 = i <= 2? 0 : i - 3;
+    size_t last_4 = i <= 3? 0 : i - 4;
+
+    size_t next_1 = i < mTrajectory.size() - 1? i + 1 : i;
+    size_t next_2 = i < mTrajectory.size() - 2? i + 2 : i;
+    size_t next_3 = i < mTrajectory.size() - 3? i + 3 : i;
+    size_t next_4 = i < mTrajectory.size() - 4? i + 4 : i;
+
+    Eigen::VectorXd velocities =
+        (0.5*mTrajectory[next_1] - 0.5*mTrajectory[last_1])/dt;
+
+    Eigen::Matrix<double, 5, 1> c;
+    c << -205.0/72.0, 8.0/5.0, -1.0/5.0, 8.0/315.0, -1.0/560.0;
+
+    Eigen::VectorXd accelerations =
+        (  c[1]*mTrajectory[next_1] + c[2]*mTrajectory[next_2] + c[3]*mTrajectory[next_3] + c[4]*mTrajectory[next_4]
+         + c[0]*mTrajectory[i]
+         + c[1]*mTrajectory[last_1] + c[2]*mTrajectory[last_2] + c[3]*mTrajectory[last_3] + c[4]*mTrajectory[last_4])/pow(dt,2);
+
+    hubo->setPositions(mTrajectory[i]);
+    hubo->setVelocities(velocities);
+    hubo->setAccelerations(accelerations);
+
+
+
+    const Eigen::VectorXd& pos = mTrajectory[i];
+    for(int j=0; j < pos.size(); ++j)
+      q_dump << pos[j] << "\t";
+    q_dump << "\n";
+
+    for(int j=0; j < velocities.size(); ++j)
+      vel_dump << velocities[j] << "\t";
+    vel_dump << "\n";
+
+    Eigen::Vector3d com = hubo->getCOM();
+    for(size_t j=0; j < 3; ++j)
+      com_dump << com[j] << "\t";
+    com_dump << "\n";
+
+    Eigen::Vector3d zmp = hubo->getZMP();
+    for(size_t j=0; j < 3; ++j)
+      zmp_dump << zmp[j] << "\t";
+    zmp_dump << "\n";
+
+    time_dump << i*hubo->getTimeStep() << "\n";
+  }
+
+  q_dump.close();
+  vel_dump.close();
+  com_dump.close();
+  zmp_dump.close();
+  time_dump.close();
+
+  std::cout << "finished dumping" << std::endl;
+}
+
 
 int main()
 {
@@ -1332,7 +1400,7 @@ int main()
 
     std::cout << "Trajectory Time:  " << (double)(raw_trajectory.size())*hubo->getTimeStep() << std::endl;
 
-    dumpTrajectory(raw_trajectory, dump_name);
+    dumpAllData(hubo, raw_trajectory);
   }
 
 
@@ -1381,7 +1449,7 @@ int main()
     osgDart::Viewer viewer;
     viewer.addWorldNode(display);
     viewer.allowSimulation(false);
-    viewer.record("/home/ayonga/dump/");
+//    viewer.record(PROJECT_PATH"dump/");
 
     osg::ref_ptr<osgDart::SupportPolygonVisual> support_vis =
             new osgDart::SupportPolygonVisual(hubo, -0.97+0.02);
