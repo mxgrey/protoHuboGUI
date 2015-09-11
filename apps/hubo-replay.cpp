@@ -38,6 +38,8 @@
 
 #include <osg/Timer>
 
+#include "config.h"
+
 const double frequency = 1000.0;
 
 using namespace dart::dynamics;
@@ -174,7 +176,7 @@ int main()
   world->addSkeleton(hubo);
   world->addSkeleton(createGround());
 
-  std::string name = "/home/ayonga/protoHuboGUI/trajectory.dat";
+  std::string name = PROJECT_PATH"trajectory.dat";
 
   std::ifstream file;
   file.open(name);
@@ -211,7 +213,7 @@ int main()
                                                  osg::Vec3(-0.20, -0.08, 0.98));
 
   viewer.setCameraManipulator(viewer.getCameraManipulator());
-  viewer.record("/home/ayonga/dump");
+  viewer.record(PROJECT_PATH"dump");
 
   viewer.run();
 }

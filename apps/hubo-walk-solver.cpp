@@ -43,6 +43,8 @@
 
 #include <osg/Timer>
 
+#include "config.h"
+
 using namespace dart::dynamics;
 using namespace dart::optimizer;
 
@@ -874,6 +876,10 @@ public:
 
 protected:
 
+  std::ofstream vel_dump;
+  std::ofstream com_dump;
+  std::ofstream zmp_dump;
+
   SkeletonPtr hubo;
   std::vector<Eigen::VectorXd> mTrajectory;
   size_t LSR;
@@ -1206,18 +1212,18 @@ int main()
   world->addSkeleton(hubo);
   world->setTimeStep(1.0/frequency);
 
-//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-08-27T07-01-0400.yaml";
-//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-08-29T16-11-0400.yaml";
-//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-01T15-35-0400.yaml";
-//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-02T02-06-0400.yaml";
-//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-03T01-51-0400.yaml";
-//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-07T12-50-0400.yaml";
-//  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-08T21-24-0400.yaml";
-  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-08T20-44-0400.yaml";
+//  std::string yaml = PROJECT_PATH"params_2015-08-27T07-01-0400.yaml";
+//  std::string yaml = PROJECT_PATH"params_2015-08-29T16-11-0400.yaml";
+//  std::string yaml = PROJECT_PATH"params_2015-09-01T15-35-0400.yaml";
+//  std::string yaml = PROJECT_PATH"params_2015-09-02T02-06-0400.yaml";
+//  std::string yaml = PROJECT_PATH"params_2015-09-03T01-51-0400.yaml";
+//  std::string yaml = PROJECT_PATH"params_2015-09-07T12-50-0400.yaml";
+//  std::string yaml = PROJECT_PATH"params_2015-09-08T21-24-0400.yaml";
+  std::string yaml = PROJECT_PATH"params_2015-09-08T20-44-0400.yaml";
   bool loadfile = false;
 //  loadfile = true;
 
-  std::string dump_name = "/home/ayonga/protoHuboGUI/trajectory.dat";
+  std::string dump_name = PROJECT_PATH"trajectory.dat";
 
   std::vector<Eigen::VectorXd> raw_trajectory;
   if(loadfile)

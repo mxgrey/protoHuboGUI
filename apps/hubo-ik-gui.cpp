@@ -42,6 +42,8 @@
 #include <HuboPath/Operator.hpp>
 #include <osg/Timer>
 
+#include "config.h"
+
 using namespace dart::dynamics;
 using namespace dart::simulation;
 
@@ -909,7 +911,7 @@ public:
 
   void loadTrajectory()
   {
-    std::string filename = "/home/ayonga/protoHuboGUI/trajectory.dat";
+    std::string filename = PROJECT_PATH"trajectory.dat";
 
     std::vector<Eigen::VectorXd> raw_trajectory;
     std::ifstream file;
