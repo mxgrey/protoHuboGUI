@@ -1213,7 +1213,7 @@ int main()
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-03T01-51-0400.yaml";
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-07T12-50-0400.yaml";
 //  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-08T21-24-0400.yaml";
-  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-08T20-44-0400.yaml";
+  std::string yaml = "/home/ayonga/protoHuboGUI/params_2015-09-09T13-08-0400.yaml";
   bool loadfile = false;
 //  loadfile = true;
 
