@@ -22,5 +22,8 @@ TAGS
 *.rsp
 *.autosave
 *~
+*.dat
+dump/*
+apps/config.h
 /nbproject/
 /doxygen/html/

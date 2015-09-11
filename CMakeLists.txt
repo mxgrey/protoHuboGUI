@@ -7,6 +7,9 @@ add_definitions("-Wall -Wextra")
 set(CMAKE_DEBUG_POSTFIX "d")
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
+message(STATUS "CMAKE_SOURCE_DIR : ${CMAKE_SOURCE_DIR}")
+configure_file("apps/config.h.in" "${CMAKE_SOURCE_DIR}/apps/config.h" @ONLY)
+
 # Eigen
 find_package(EIGEN3 3.0.5 QUIET)
 if(EIGEN3_FOUND)
