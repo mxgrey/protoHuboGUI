@@ -1,0 +1,15 @@
+- name: params_2015-09-12T03-02-0400.yaml
+  note: fast stepping gait, biased zmp (inside?)
+
+- name: params_2015-09-12T01-14-0400.yaml
+  note: fast stepping gait, centered zmp
+
+  
+- name: params_2015-09-12T00-48-0400.yaml
+  note: with starting behavior, mid-size step, higher joint velocity, takes 3 steps in simulation.
+
+- name: params_2015-09-12T00-11-0400.yaml
+  note: with starting behavior, using human data as cost function. However, the robot falls at the first step.
+
+- name: params_2015-09-11T16-24-0400.yaml
+  note: longger step, higher velocity
