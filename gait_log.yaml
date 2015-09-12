@@ -13,3 +13,21 @@
 
 - name: params_2015-09-11T16-24-0400.yaml
   note: longger step, higher velocity
+
+- name: params_2015-09-12T11-29-0400.yaml
+  note: M = 6 (num_params = 6). fast stepping gait, walks in the simulation, however looks unstable.
+
+- name: params_2015-09-12T12-21-0400.yaml
+  note: M = 6 (num_params = 6). fast stepping gait, walks in the simulation, slightly better than the previous one?
+
+- name: params_2015-09-12T13-07-0400.yaml
+  note: starting gait for the gait (params_2015-09-12T12-21-0400), however the first step looks aweful.
+
+- name: params_2015-09-12T13-19-0400.yaml
+  note: starting behavior for the gait (params_2015-09-12T11-29-0400), not too bad.
+
+- name: params_2015-09-12T13-39-0400.yaml
+  note: another starting gait for the gait (params_2015-09-12T12-21-0400).
+
+- name: params_2015-09-12T13-44-0400.yaml
+  note: another starting behavior for the gait (params_2015-09-12T11-29-0400).

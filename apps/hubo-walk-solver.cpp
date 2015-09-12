@@ -49,7 +49,7 @@ using namespace dart::dynamics;
 using namespace dart::optimizer;
 
 const double frequency = 1000.0;
-const double num_params = 5;
+const double num_params = 6;
 //static double sign(double value)
 //{
 //  return value > 0? 1.0 : (value < 0? -1.0 : 0.0);
@@ -1287,7 +1287,7 @@ int main()
 //  std::string yaml = PROJECT_PATH"params_2015-09-03T01-51-0400.yaml";
 //  std::string yaml = PROJECT_PATH"params_2015-09-07T12-50-0400.yaml";
 //  std::string yaml = PROJECT_PATH"params_2015-09-08T21-24-0400.yaml";
-  std::string yaml = PROJECT_PATH"params_2015-09-12T03-02-0400.yaml";
+  std::string yaml = PROJECT_PATH"params_2015-09-12T13-44-0400.yaml";
   bool loadfile = false;
 //  loadfile = true;
 
@@ -1372,7 +1372,7 @@ int main()
     timer.setStartTick();
 
     bool startWithLeft = true;
-    startWithLeft = false;
+    startWithLeft = true;
 
     std::vector<Eigen::VectorXd> leftStartDS;
     std::vector<Eigen::VectorXd> leftStartSS;
@@ -1381,7 +1381,7 @@ int main()
     {
       // leftStartDS = setupAndSolveProblem<21,33>(hubo, leftStartDSParams, "L", "R", true);
       // leftStartSS = setupAndSolveProblem<24,33>(hubo, leftStartSSParams, "L", "R", false);
-      leftStart = setupAndSolveProblem<24,33>(hubo, leftStartParams, "L", "R", false, 0.995);
+      leftStart = setupAndSolveProblem<24,33>(hubo, leftStartParams, "L", "R", false, 1.0);
     }
 
     std::vector<Eigen::VectorXd> rightWalk =
