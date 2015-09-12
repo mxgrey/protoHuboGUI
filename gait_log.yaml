@@ -31,3 +31,6 @@
 
 - name: params_2015-09-12T13-44-0400.yaml
   note: another starting behavior for the gait (params_2015-09-12T11-29-0400).
+
+- name: params_2015-09-12T15-21-0400.yaml
+  note: periodic gait without starting step, shift support polygon backward 2 cmm.
