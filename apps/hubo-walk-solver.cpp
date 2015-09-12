@@ -49,7 +49,7 @@ using namespace dart::dynamics;
 using namespace dart::optimizer;
 
 const double frequency = 1000.0;
-
+const double num_params = 5;
 //static double sign(double value)
 //{
 //  return value > 0? 1.0 : (value < 0? -1.0 : 0.0);
@@ -440,7 +440,7 @@ public:
               const Eigen::VectorXd& alphas)
     : mTerms(terms), mAlphas(alphas)
   {
-    assert(mAlphas.size() == 5);
+    assert(mAlphas.size() == num_params);
   }
 
   double computeCost(const Eigen::VectorXd& _x)
@@ -449,7 +449,7 @@ public:
     for(const Term& term : mTerms)
       cost += term.coeff * _x[term.index];
 
-    cost -= computeBezier(mTau, mAlphas);
+    cost -= computeBezier(mTau, mAlphas, num_params - 1);
     return cost;
   }
 
@@ -539,7 +539,7 @@ public:
 
     for(int i=1; i < eqns; ++i)
     {
-      b[i] = computeBezier(mTau, mAlphas[i]);
+      b[i] = computeBezier(mTau, mAlphas[i], num_params - 1);
     }
 
     x = A.colPivHouseholderQr().solve(b);
@@ -642,10 +642,10 @@ public:
   {
     for(size_t i=0; i < mAlphaArray.size(); ++i)
     {
-      if(mAlphaArray[i].size() != 5)
+      if(mAlphaArray[i].size() != num_params)
         std::cerr << "EndEffectorConstraint: Invalid alpha size for index "
                   << i << ": " << mAlphaArray[i].size() << std::endl;
-      assert(mAlphaArray[i].size() == 5);
+      assert(mAlphaArray[i].size() == num_params);
     }
 
     mIK = InverseKinematics::create(node);
@@ -686,7 +686,7 @@ public:
   {
     Eigen::Vector6d screw;
     for(size_t i=0; i < 6; ++i)
-      screw[i] = computeBezier(mTau, mAlphaArray[i]);
+      screw[i] = computeBezier(mTau, mAlphaArray[i], num_params - 1);
 
     Eigen::Isometry3d tf(Eigen::Isometry3d::Identity());
     // TODO: Find out how to convert the screw into an Isometry3d
@@ -919,9 +919,9 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
 {\
   JacobianNode* ee = body;\
   std::vector<Eigen::VectorXd> alphaArray;\
-  alphaArray.push_back(Eigen::VectorXd::Constant(5, 0.0));\
-  alphaArray.push_back(Eigen::VectorXd::Constant(5, 0.0));\
-  alphaArray.push_back(Eigen::VectorXd::Constant(5, 0.0));\
+  alphaArray.push_back(Eigen::VectorXd::Constant(num_params, 0.0));\
+  alphaArray.push_back(Eigen::VectorXd::Constant(num_params, 0.0));\
+  alphaArray.push_back(Eigen::VectorXd::Constant(num_params, 0.0));\
   alphaArray.push_back(getAlphas(a, index1-1));\
   alphaArray.push_back(getAlphas(a, index2-1));\
   alphaArray.push_back(getAlphas(a, index3-1));\
@@ -960,7 +960,7 @@ template<int eqns, int dofs>
 std::vector<Eigen::VectorXd> setupAndSolveProblem(
     const SkeletonPtr& hubo, YAML::Node params,
     const std::string& st/*ance*/, const std::string& sw/*ing*/,
-    bool double_support = false)
+    bool double_support = false, double tau_max = 1.0)
 {
   Eigen::VectorXd lastPositions = hubo->getPositions();
   hubo->resetPositions();
@@ -1112,7 +1112,7 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   std::cout << "\n\n" << st << " Foot Trajectory (p0 " << p0 << ") :\n";
   double time = 0.0;
   double tau = 0.0;
-  double tau_max = 1.0;
+//  double tau_max = 1.0;
 
   if(double_support)
   {
@@ -1287,7 +1287,7 @@ int main()
 //  std::string yaml = PROJECT_PATH"params_2015-09-03T01-51-0400.yaml";
 //  std::string yaml = PROJECT_PATH"params_2015-09-07T12-50-0400.yaml";
 //  std::string yaml = PROJECT_PATH"params_2015-09-08T21-24-0400.yaml";
-  std::string yaml = PROJECT_PATH"params_2015-09-08T20-44-0400.yaml";
+  std::string yaml = PROJECT_PATH"params_2015-09-12T03-02-0400.yaml";
   bool loadfile = false;
 //  loadfile = true;
 
@@ -1320,11 +1320,21 @@ int main()
     YAML::Node domain = config["domain"];
 
     YAML::Node leftStartDSParams, leftStartSSParams, leftWalkParams, rightStartDSParams, rightStartSSParams, rightWalkParams;
+    YAML::Node leftStartParams, rightStartParams;
     for(size_t i=0; i < domain.size(); ++i)
     {
       const std::string& paramName = domain[i]["name"].as<std::string>();
-
-      if("LeftDS3DFlatStarting" == paramName)
+      if("Left3DFlatStarting" == paramName)
+      {
+        std::cout << "Found left starting params" << std::endl;
+        leftStartParams  = domain[i];
+      }
+      else if("Right3DFlatStarting" == paramName)
+      {
+        std::cout << "Found right starting params" << std::endl;
+        rightStartParams  = domain[i];
+      }
+      else if("LeftDS3DFlatStarting" == paramName)
       {
         std::cout << "Found left starting double support phase params" << std::endl;
         leftStartDSParams  = domain[i];
@@ -1366,10 +1376,12 @@ int main()
 
     std::vector<Eigen::VectorXd> leftStartDS;
     std::vector<Eigen::VectorXd> leftStartSS;
+    std::vector<Eigen::VectorXd> leftStart;
     if(startWithLeft)
     {
-      leftStartDS = setupAndSolveProblem<21,33>(hubo, leftStartDSParams, "L", "R", true);
-      leftStartSS = setupAndSolveProblem<24,33>(hubo, leftStartSSParams, "L", "R", false);
+      // leftStartDS = setupAndSolveProblem<21,33>(hubo, leftStartDSParams, "L", "R", true);
+      // leftStartSS = setupAndSolveProblem<24,33>(hubo, leftStartSSParams, "L", "R", false);
+      leftStart = setupAndSolveProblem<24,33>(hubo, leftStartParams, "L", "R", false, 0.995);
     }
 
     std::vector<Eigen::VectorXd> rightWalk =
@@ -1382,13 +1394,15 @@ int main()
 
     if(startWithLeft)
     {
-      for(const Eigen::VectorXd& pos : leftStartDS)
-        raw_trajectory.push_back(pos);
-      for(const Eigen::VectorXd& pos : leftStartSS)
-        raw_trajectory.push_back(pos);
+      // for(const Eigen::VectorXd& pos : leftStartDS)
+      //   raw_trajectory.push_back(pos);
+      // for(const Eigen::VectorXd& pos : leftStartSS)
+      //   raw_trajectory.push_back(pos);
+      for(const Eigen::VectorXd& pos : leftStart)
+           raw_trajectory.push_back(pos);
     }
 
-    int NumOfStep = 20;
+    int NumOfStep = 10;
     for(int i=0; i < NumOfStep; i++ )
     {
         for(const Eigen::VectorXd& pos : rightWalk)
