@@ -50,10 +50,6 @@ using namespace dart::optimizer;
 
 const double frequency = 1000.0;
 const double num_params = 6;
-//static double sign(double value)
-//{
-//  return value > 0? 1.0 : (value < 0? -1.0 : 0.0);
-//}
 
 class WalkSolver : public Solver
 {
@@ -137,6 +133,331 @@ protected:
 
   size_t mLastNumIterations;
 
+};
+
+static inline bool checkDist(Eigen::Vector3d& p, double a, double b)
+{
+  double d = p.norm();
+  double dmax = a+b;
+  double dmin = fabs(a-b);
+
+  if (d > dmax)
+  {
+    p *= dmax/d;
+    return false;
+  }
+  else if (d < dmin)
+  {
+    p *= dmin/d;
+    return false;
+  }
+  else
+  {
+    return true;
+  }
+}
+
+static inline void clamp_sincos(double& sincos, bool& valid)
+{
+  if (sincos < -1)
+  {
+    valid = false;
+    sincos = -1;
+  }
+  else if (sincos > 1)
+  {
+    valid = false;
+    sincos = 1;
+  }
+}
+
+static inline Eigen::Vector3d flipEuler3Axis(const Eigen::Vector3d& u)
+{
+  Eigen::Vector3d v;
+  v[0] = u[0] - M_PI;
+  v[1] = M_PI - u[1];
+  v[2] = u[2] - M_PI;
+  return v;
+}
+
+/// The HuboArmIK is based on the derivation of Hubo's arm IK by Matt Zucker.
+class HuboArmIK : public InverseKinematics::Analytical
+{
+public:
+
+  HuboArmIK(InverseKinematics* _ik, const std::string& baseLinkName)
+    : Analytical(_ik, "HuboArmIK_"+baseLinkName),
+      configured(false),
+      mBaseLinkName(baseLinkName)
+  {
+    // Do nothing
+  }
+
+  std::unique_ptr<GradientMethod> clone(InverseKinematics* _newIK) const override
+  {
+    return std::unique_ptr<GradientMethod>(new HuboArmIK(_newIK, mBaseLinkName));
+  }
+
+  const std::vector<Solution>& computeSolutions(
+      const Eigen::Isometry3d& _desiredBodyTf)
+  {
+    mSolutions.clear();
+    mSolutions.reserve(8);
+
+    if(!configured)
+    {
+      configure();
+
+      if(!configured)
+      {
+        dtwarn << "[HuboArmIK::computeSolutions] This analytical IK was not able "
+               << "to configure properly, so it will not be able to compute "
+               << "solutions\n";
+        return mSolutions;
+      }
+    }
+
+    const BodyNodePtr& base = mBaseLink.lock();
+    if(nullptr == base || nullptr == mWristEnd)
+    {
+      dterr << "[HuboArmIK::computeSolutions] Attempting to perform an IK on a "
+            << "limb that no longer exists!\n";
+      assert(false);
+      return mSolutions;
+    }
+
+    const size_t SP = 0;
+    const size_t SR = 1;
+    const size_t SY = 2;
+    const size_t EP = 3;
+    const size_t WY = 4;
+    const size_t WP = 5;
+
+    const SkeletonPtr& skel = base->getSkeleton();
+
+    Eigen::Isometry3d B =
+        base->getParentBodyNode()->getWorldTransform().inverse()
+        * _desiredBodyTf * mWristEnd->getTransform(mIK->getNode());
+
+    Eigen::Isometry3d shoulder_from_wrist = shoulderTf.inverse() * B;
+    Eigen::Vector3d p = shoulder_from_wrist.inverse().translation();
+
+    const double a2 = L5*L5 + L4*L4;
+    const double b2 = L3*L3 + L4*L4;
+    const double a = sqrt(a2);
+    const double b = sqrt(b2);
+
+    const double alpha = atan2(L5, L4);
+    const double beta = atan2(L3, L4);
+
+    bool startValid = checkDist(p, a, b);
+
+    double c2 = p.dot(p);
+    double x = p.x();
+    double y = p.y();
+    double z = p.z();
+
+    for(size_t i = 0; i < 8; ++i)
+    {
+      const int flipEP = alterantives(i,0);
+      const int incWY = alterantives(i,1);
+      const int flipShoulder = alterantives(i,2);
+
+      Eigen::Vector6d testQ;
+      bool isValid = startValid;
+
+      double cosGamma = (a2 + b2 - c2) / (2*a*b);
+      clamp_sincos(cosGamma, isValid);
+
+      double gamma = flipEP * acos( cosGamma );
+      double theta3 = alpha + beta + gamma - 2*M_PI;
+
+      testQ(EP) = theta3;
+
+      double c3 = cos(theta3);
+      double s3 = sin(theta3);
+
+      double numer = -y;
+      double denom = (-L4*c3 - L3*s3 + L4);
+
+      double s2, theta2;
+
+      if(std::abs(denom) < zeroSize)
+      {
+        isValid = false;
+        const double& prevWY = skel->getPosition(mDofs[WY]);
+        theta2 = incWY ? prevWY : M_PI - prevWY;
+        s2 = sin(theta2);
+      }
+      else
+      {
+        s2 = numer / denom;
+        clamp_sincos(s2, isValid);
+        theta2 = incWY ? M_PI - asin(s2) : asin(s2);
+      }
+
+      testQ(WY) = theta2;
+
+      double c2 = cos(theta2);
+
+      double r =  L4*c2 - L4*c2*c3 - L3*s3*c2;
+      double q = -L4*s3 + L3*c3 + L5;
+
+      double det = -(q*q + r*r);
+
+      if(std::abs(det) < zeroSize)
+        isValid = false;
+
+      double k = det < 0 ? -1 : 1;
+
+      double ks1 = k*( q*x - r*z );
+      double kc1 = k*(-r*x - q*z );
+
+      double theta1 = atan2(ks1, kc1);
+      testQ(WP) = theta1;
+
+      Eigen::Quaterniond Rlower =
+        Eigen::Quaterniond(Eigen::AngleAxisd(testQ(EP), Eigen::Vector3d::UnitY())) *
+        Eigen::Quaterniond(Eigen::AngleAxisd(testQ(WY), Eigen::Vector3d::UnitZ())) *
+        Eigen::Quaterniond(Eigen::AngleAxisd(testQ(WP), Eigen::Vector3d::UnitY()));
+
+      Eigen::Matrix3d Rupper = B.rotation() * Rlower.inverse().matrix();
+
+      Eigen::Vector3d euler = Rupper.eulerAngles(1, 0, 2);
+
+      if(flipShoulder)
+        euler = flipEuler3Axis(euler);
+
+      testQ(SP) = euler[0];
+      testQ(SR) = euler[1];
+      testQ(SY) = euler[2];
+
+      for(size_t j=0; j < 6; ++j)
+      {
+        testQ[j] = dart::math::wrapToPi(testQ[j]);
+        if(std::abs(testQ[j]) < zeroSize)
+          testQ[j] = 0.0;
+      }
+
+      int validity = isValid? VALID : OUT_OF_REACH;
+      mSolutions.push_back(Solution(testQ, validity));
+    }
+
+    checkSolutionJointLimits();
+
+    return mSolutions;
+  }
+
+  const std::vector<size_t>& getDofs() const override
+  {
+    if(!configured)
+      configure();
+
+    return mDofs;
+  }
+
+  const double zeroSize = 1e-8;
+
+protected:
+
+  void configure() const
+  {
+    configured = false;
+
+    mBaseLink = mIK->getNode()->getSkeleton()->getBodyNode(mBaseLinkName);
+
+    BodyNode* base = mBaseLink.lock();
+    if(nullptr == base)
+    {
+      dterr << "[HuboArmIK::configure] base link is a nullptr\n";
+      assert(false);
+      return;
+    }
+
+    const SkeletonPtr& skel = base->getSkeleton();
+    const BodyNodePtr& pelvis = skel->getBodyNode("Body_TSY");
+    if(nullptr == pelvis)
+    {
+      dterr << "[HuboArmIK::configure] Could not find Hubo's pelvis "
+            << "(Body_TSY)\n";
+      assert(false);
+      return;
+    }
+
+    Eigen::Vector6d saved_q;
+
+    DegreeOfFreedom* dofs[6];
+    BodyNode* bn = base;
+    for(size_t i=0; i < 6; ++i)
+    {
+      Joint* joint = bn->getParentJoint();
+      if(joint->getNumDofs() != 1)
+      {
+        dterr << "[HuboArmIK::configure] Invalid number of DOFs ("
+              << joint->getNumDofs() << ") in the Joint [" << joint->getName()
+              << "]\n";
+        assert(false);
+        return;
+      }
+
+      dofs[i] = joint->getDof(0);
+      saved_q[i] = dofs[i]->getPosition();
+      dofs[i]->setPosition(0.0);
+      bn = bn->getChildBodyNode(0);
+    }
+
+    BodyNode* elbow = dofs[3]->getChildBodyNode();
+    L3 = std::abs(elbow->getTransform(dofs[2]->getParentBodyNode()).translation()[2]);
+    L4 = std::abs(elbow->getTransform(dofs[3]->getParentBodyNode()).translation()[0]);
+
+    BodyNode* wrist = dofs[5]->getChildBodyNode();
+    Eigen::Isometry3d wrist_tf = wrist->getTransform(elbow);
+    L5 = std::abs(wrist_tf.translation()[2]);
+
+    shoulderTf = Eigen::Isometry3d::Identity();
+    shoulderTf.translate(dofs[3]->getParentBodyNode()->getTransform(pelvis)
+        .translation()[0] * Eigen::Vector3d::UnitX());
+    shoulderTf.translate(dofs[2]->getParentBodyNode()->getTransform(pelvis)
+        .translation()[1] * Eigen::Vector3d::UnitY());
+    shoulderTf.translate(dofs[2]->getParentBodyNode()->getTransform(pelvis)
+        .translation()[2] * Eigen::Vector3d::UnitZ());
+
+    mWristEnd = dofs[5]->getChildBodyNode();
+
+    alterantives <<
+         1,  1,  1,
+         1,  1,  0,
+         1,  0,  1,
+         1,  0,  0,
+        -1,  1,  1,
+        -1,  1,  0,
+        -1,  0,  1,
+        -1,  0,  0;
+
+    for(size_t i=0; i < 6; ++i)
+    {
+      dofs[i]->setPosition(saved_q[i]);
+      mDofs.push_back(dofs[i]->getIndexInSkeleton());
+    }
+
+    configured = true;
+  }
+
+  mutable bool configured;
+
+  mutable Eigen::Isometry3d shoulderTf;
+  mutable Eigen::Isometry3d wristTfInv;
+  mutable Eigen::Isometry3d mNodeOffsetTfInv;
+  mutable double L3, L4, L5;
+
+  mutable Eigen::Matrix<int, 8, 3> alterantives;
+
+  mutable std::vector<size_t> mDofs;
+
+  std::string mBaseLinkName;
+  mutable WeakBodyNodePtr mBaseLink;
+
+  mutable JacobianNode* mWristEnd;
 };
 
 class HuboLegIK : public InverseKinematics::Analytical
@@ -658,6 +979,18 @@ public:
     {
       mIK->setGradientMethod<HuboLegIK>("Body_RHY");
     }
+    else if(node->getName() == "Body_LWR")
+    {
+      mIK->setGradientMethod<HuboArmIK>("Body_LSP");
+      mIK->getAnalytical()->setExtraDofUtilization(
+            IK::Analytical::PRE_ANALYTICAL);
+    }
+    else if(node->getName() == "Body_RWR")
+    {
+      mIK->setGradientMethod<HuboArmIK>("Body_RSP");
+      mIK->getAnalytical()->setExtraDofUtilization(
+            IK::Analytical::PRE_ANALYTICAL);
+    }
     else
     {
       dterr << "[EndEffectorConstraint::constructor] Unsupported node: "
@@ -897,7 +1230,7 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
   system->setEqn(index, terms, alphas);\
 }
 
-#define ADD_DOUBLE_SUPPORT_OUTPUT( index1, index2, index3, index4, index5, index6, body, relativeTo )\
+#define ADD_END_EFFECTOR_OUTPUT( index1, index2, index3, index4, index5, index6, body, relativeTo )\
 {\
   JacobianNode* ee = body;\
   std::vector<Eigen::VectorXd> alphaArray;\
@@ -960,6 +1293,7 @@ template<int eqns, int dofs>
 std::vector<Eigen::VectorXd> setupAndSolveProblem(
     const SkeletonPtr& hubo, YAML::Node params,
     const std::string& st/*ance*/, const std::string& sw/*ing*/,
+    bool hand_constraints = false,
     bool double_support = false, double tau_max = 1.0)
 {
   Eigen::VectorXd lastPositions = hubo->getPositions();
@@ -1032,20 +1366,30 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   ADD_LINEAR_OUTPUT(3,  make_terms(hubo, 1.0, st+"AR"));
   ADD_LINEAR_OUTPUT(4,  make_terms(hubo, -1.0, st+"AR", -1.0, st+"HR"));
   ADD_LINEAR_OUTPUT(5,  make_terms(hubo, 1.0, st+"HY"));
-  ADD_LINEAR_OUTPUT(6,  make_terms(hubo, 1.0, st+"SP"));
-  ADD_LINEAR_OUTPUT(7,  make_terms(hubo, 1.0, st+"SR"));
-  ADD_LINEAR_OUTPUT(8,  make_terms(hubo, 1.0, st+"SY"));
-  ADD_LINEAR_OUTPUT(9,  make_terms(hubo, 1.0, st+"EP"));
-  ADD_LINEAR_OUTPUT(10, make_terms(hubo, 1.0, st+"WY"));
-  ADD_LINEAR_OUTPUT(11, make_terms(hubo, 1.0, st+"WP"));
+
+  if(!hand_constraints)
+  {
+    ADD_LINEAR_OUTPUT(6,  make_terms(hubo, 1.0, st+"SP"));
+    ADD_LINEAR_OUTPUT(7,  make_terms(hubo, 1.0, st+"SR"));
+    ADD_LINEAR_OUTPUT(8,  make_terms(hubo, 1.0, st+"SY"));
+    ADD_LINEAR_OUTPUT(9,  make_terms(hubo, 1.0, st+"EP"));
+    ADD_LINEAR_OUTPUT(10, make_terms(hubo, 1.0, st+"WY"));
+    ADD_LINEAR_OUTPUT(11, make_terms(hubo, 1.0, st+"WP"));
+  }
+
   ADD_LINEAR_OUTPUT(12, make_terms(hubo, 1.0, st+"WR"));
   ADD_LINEAR_OUTPUT(13, make_terms(hubo, 1.0, "TSY"));
-  ADD_LINEAR_OUTPUT(14, make_terms(hubo, 1.0, sw+"SP"));
-  ADD_LINEAR_OUTPUT(15, make_terms(hubo, 1.0, sw+"SR"));
-  ADD_LINEAR_OUTPUT(16, make_terms(hubo, 1.0, sw+"SY"));
-  ADD_LINEAR_OUTPUT(17, make_terms(hubo, 1.0, sw+"EP"));
-  ADD_LINEAR_OUTPUT(18, make_terms(hubo, 1.0, sw+"WY"));
-  ADD_LINEAR_OUTPUT(19, make_terms(hubo, 1.0, sw+"WP"));
+
+  if(!hand_constraints)
+  {
+    ADD_LINEAR_OUTPUT(14, make_terms(hubo, 1.0, sw+"SP"));
+    ADD_LINEAR_OUTPUT(15, make_terms(hubo, 1.0, sw+"SR"));
+    ADD_LINEAR_OUTPUT(16, make_terms(hubo, 1.0, sw+"SY"));
+    ADD_LINEAR_OUTPUT(17, make_terms(hubo, 1.0, sw+"EP"));
+    ADD_LINEAR_OUTPUT(18, make_terms(hubo, 1.0, sw+"WY"));
+    ADD_LINEAR_OUTPUT(19, make_terms(hubo, 1.0, sw+"WP"));
+  }
+
   ADD_LINEAR_OUTPUT(20, make_terms(hubo, 1.0, sw+"WR"));
 
 //  BodyNode* knee = hubo->getBodyNode("Body_"+st+"KP");
@@ -1068,9 +1412,9 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
   if(double_support)
   {
-    ADD_DOUBLE_SUPPORT_OUTPUT(21, 22, 23, 24, 25, 26,
-                              hubo->getBodyNode("Body_"+sw+"AR"),
-                              hubo->getBodyNode("Body_"+st+"AR"));
+    ADD_END_EFFECTOR_OUTPUT(21, 22, 23, 24, 25, 26,
+                            hubo->getBodyNode("Body_"+sw+"AR"),
+                            hubo->getBodyNode("Body_"+st+"AR"));
   }
   else
   {
@@ -1081,6 +1425,17 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
     ADD_LINEAR_OUTPUT(23, make_terms(hubo, 1.0, st+"HR", -1.0, sw+"HR"));
 
     ADD_SWING_FOOT_ORIENTATION_OUTPUT( 24, 25, 26, hubo->getBodyNode("Body_"+sw+"AR") );
+  }
+
+  if(hand_constraints)
+  {
+    ADD_END_EFFECTOR_OUTPUT(6, 7, 8, 9, 10, 11,
+                            hubo->getBodyNode("Body_"+st+"WR"),
+                            hubo->getBodyNode("Body_"+st+"AR"));
+
+    ADD_END_EFFECTOR_OUTPUT(14, 15, 16, 17, 18, 19,
+                            hubo->getBodyNode("Body_"+sw+"WR"),
+                            hubo->getBodyNode("Body_"+st+"WR"));
   }
 
   system->setTauSatisfaction(
@@ -1288,8 +1643,15 @@ int main()
 //  std::string yaml = PROJECT_PATH"params_2015-09-07T12-50-0400.yaml";
 //  std::string yaml = PROJECT_PATH"params_2015-09-08T21-24-0400.yaml";
   std::string yaml = PROJECT_PATH"params_2015-09-12T13-44-0400.yaml";
+
+
   bool loadfile = false;
 //  loadfile = true;
+
+
+  bool hand_constraints = false;
+  hand_constraints = true;
+
 
   std::string dump_name = PROJECT_PATH"trajectory.dat";
 
@@ -1384,10 +1746,12 @@ int main()
       leftStart = setupAndSolveProblem<24,33>(hubo, leftStartParams, "L", "R", false, 1.0);
     }
 
-    std::vector<Eigen::VectorXd> rightWalk =
-        setupAndSolveProblem<24,33>(hubo, rightWalkParams, "R", "L");
-    std::vector<Eigen::VectorXd> leftWalk =
-        setupAndSolveProblem<24,33>(hubo, leftWalkParams, "L", "R");
+    std::vector<Eigen::VectorXd> rightWalk = hand_constraints?
+          setupAndSolveProblem<12,33>(hubo, rightWalkParams, "R", "L", true)
+        : setupAndSolveProblem<24,33>(hubo, rightWalkParams, "R", "L");
+    std::vector<Eigen::VectorXd> leftWalk = hand_constraints?
+          setupAndSolveProblem<12,33>(hubo, leftWalkParams, "L", "R", true)
+        : setupAndSolveProblem<24,33>(hubo, leftWalkParams, "L", "R");
 
     std::cout << "Computation Time: " << timer.time_s() << std::endl;
 
