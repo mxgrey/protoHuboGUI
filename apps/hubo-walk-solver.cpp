@@ -50,6 +50,27 @@ using namespace dart::optimizer;
 
 const double frequency = 1000.0;
 const double num_params = 6;
+//const double num_params = 5;
+
+bool checknan(const Eigen::Isometry3d& tf, const std::string& message)
+{
+  bool hasnan = false;
+  for(size_t i=0; i < 4; ++i)
+  {
+    for(size_t j=0; j < 3; ++j)
+    {
+      if(std::isnan(tf.matrix()(j,i)))
+      {
+        hasnan = true;
+      }
+    }
+  }
+
+  if(hasnan)
+    std::cout << "NaN component found: " << message << std::endl;
+
+  return hasnan;
+}
 
 class WalkSolver : public Solver
 {
@@ -77,7 +98,7 @@ public:
       for(size_t i=0; i < problem->getNumEqConstraints(); ++i)
       {
         const FunctionPtr& constraint = problem->getEqConstraint(i);
-//        double cost = constraint->eval(x);
+        constraint->eval(x);
         dxmap.setZero();
         constraint->evalGradient(x, dxmap);
         x -= dxmap/* * sign(cost)*/;
@@ -88,6 +109,9 @@ public:
       {
         const FunctionPtr& constraint = problem->getEqConstraint(i);
         double cost = constraint->eval(x);
+
+
+
         if(std::abs(cost) > mProperties.mTolerance)
         {
 //          std::cout << "[" << i << "] " << cost << ": ";
@@ -101,6 +125,7 @@ public:
 //          std::cout << " \t|\t ";
           solved = false;
         }
+
       }
 
 //      if(!solved)
@@ -128,6 +153,8 @@ public:
   {
     return mLastNumIterations;
   }
+
+  SkeletonPtr hubo;
 
 protected:
 
@@ -337,6 +364,10 @@ public:
         testQ[j] = dart::math::wrapToPi(testQ[j]);
         if(std::abs(testQ[j]) < zeroSize)
           testQ[j] = 0.0;
+
+        if(std::isnan(testQ[j]))
+          std::cout << "NaN detected in " << j << " component of arm solver for "
+                    << mIK->getNode()->getName() << std::endl;
       }
 
       int validity = isValid? VALID : OUT_OF_REACH;
@@ -752,49 +783,6 @@ struct Term
   double coeff;
 };
 
-class LinearCombo : public Function,
-                    public BezierDependentFunc
-{
-public:
-
-  LinearCombo(const std::vector<Term>& terms,
-              const Eigen::VectorXd& alphas)
-    : mTerms(terms), mAlphas(alphas)
-  {
-    assert(mAlphas.size() == num_params);
-  }
-
-  double computeCost(const Eigen::VectorXd& _x)
-  {
-    double cost = 0;
-    for(const Term& term : mTerms)
-      cost += term.coeff * _x[term.index];
-
-    cost -= computeBezier(mTau, mAlphas, num_params - 1);
-    return cost;
-  }
-
-  double eval(const Eigen::VectorXd& _x) override final
-  {
-    const double cost = computeCost(_x);
-    return cost*cost;
-  }
-
-  void evalGradient(const Eigen::VectorXd& _x,
-                    Eigen::Map<Eigen::VectorXd> _grad) override final
-  {
-    _grad.setZero();
-    const double cost = computeCost(_x);
-    for(const Term& term : mTerms)
-      _grad[term.index] = 2 * term.coeff * cost;
-  }
-
-protected:
-
-  std::vector<Term> mTerms;
-
-  Eigen::VectorXd mAlphas;
-};
 
 template <int eqns, int dofs>
 class LinearComboSystem : public Function,
@@ -805,6 +793,7 @@ public:
   LinearComboSystem()
   {
     A.setZero();
+    nextEqn = 1;
   }
 
   void recomputeNullspace()
@@ -814,6 +803,13 @@ public:
       Anull = NS*NS.transpose();
     else
       Anull.resize(0,0);
+  }
+
+  void addEqn(const std::vector<Term>& terms,
+              const Eigen::VectorXd& alphas)
+  {
+    setEqn(nextEqn, terms, alphas);
+    ++nextEqn;
   }
 
   void setEqn(size_t row,
@@ -883,6 +879,8 @@ public:
 
 protected:
 
+  size_t nextEqn;
+
   Eigen::Matrix<double, eqns, dofs> A;
   Eigen::Matrix<double, eqns, 1> b;
   Eigen::Matrix<double, dofs, 1> x;
@@ -936,6 +934,12 @@ public:
     // Note: This function relies on the fact that GradientDescentSolver calls
     // eval() before it calls evalGradient()
     _grad.head<6>() = rootGrad;
+
+    for(size_t i=0; i < 6; ++i)
+    {
+      if(std::isnan(_grad[i]))
+        std::cout << "HOLONOMIC CONSTRAINT has NaN component (" << i << ")" << std::endl;
+    }
   }
 
 protected:
@@ -961,6 +965,8 @@ public:
                         const std::vector<size_t>& ignoreDofs = std::vector<size_t>())
     : mAlphaArray(alphas), mIgnoreDofs(ignoreDofs)
   {
+    refFrame = Frame::World();
+
     for(size_t i=0; i < mAlphaArray.size(); ++i)
     {
       if(mAlphaArray[i].size() != num_params)
@@ -998,14 +1004,8 @@ public:
       assert(false);
     }
 
-    const SkeletonPtr& skel = node->getSkeleton();
-
-    std::vector<size_t> indices;
-    indices.reserve(skel->getNumDofs());
-    for(size_t i=0; i < skel->getNumDofs(); ++i)
-      indices.push_back(i);
-
-    mIK->setDofs(indices);
+    mGrad.resize(mIK->getDofs().size());
+    q.resize(mIK->getDofs().size());
   }
 
   void setTau(double tau) override final
@@ -1021,9 +1021,10 @@ public:
     for(size_t i=0; i < 6; ++i)
       screw[i] = computeBezier(mTau, mAlphaArray[i], num_params - 1);
 
+    Eigen::Vector3d r = refFrame->getTransform().translation();
     Eigen::Isometry3d tf(Eigen::Isometry3d::Identity());
     // TODO: Find out how to convert the screw into an Isometry3d
-    tf.translate(screw.head<3>());
+    tf.translate(screw.head<3>()+r);
     for(size_t i=0; i < 3; ++i)
     {
       double angle = screw[i+3];
@@ -1034,24 +1035,47 @@ public:
 
     mIK->getTarget()->setRelativeTransform(tf);
 
-    const Eigen::Vector6d& error = mIK->getErrorMethod().evalError(_x);
+    const std::vector<size_t>& dofs = mIK->getDofs();
+    q.setZero();
+    for(size_t i=0; i < dofs.size(); ++i)
+    {
+      q[i] = _x[dofs[i]];
+    }
+
+    const Eigen::Vector6d& error = mIK->getErrorMethod().evalError(q);
     return error.norm();
   }
 
   void evalGradient(const Eigen::VectorXd& _x,
                     Eigen::Map<Eigen::VectorXd> _grad) override final
   {
-    mIK->getGradientMethod().evalGradient(_x, _grad);
+    mGrad.setZero();
+    Eigen::Map<Eigen::VectorXd> gradMap(mGrad.data(), mGrad.size());
 
-    for(size_t dof : mIgnoreDofs)
+
+    const std::vector<size_t>& dofs = mIK->getDofs();
+    q.setZero();
+    for(size_t i=0; i < dofs.size(); ++i)
     {
-      _grad[dof] = 0.0;
+      q[i] = _x[dofs[i]];
+    }
+
+    mIK->getGradientMethod().evalGradient(q, gradMap);
+
+    _grad.setZero();
+    for(size_t i=0; i < dofs.size(); ++i)
+    {
+      _grad[dofs[i]] = gradMap[i];
     }
   }
 
   InverseKinematicsPtr mIK;
+  Frame* refFrame;
 
 protected:
+
+  Eigen::VectorXd mGrad;
+  Eigen::VectorXd q;
 
   std::vector<Eigen::VectorXd> mAlphaArray;
   std::vector<size_t> mIgnoreDofs;
@@ -1145,9 +1169,29 @@ public:
                          const std::vector<Eigen::VectorXd>& traj)
     : osgDart::WorldNode(world), mTrajectory(traj)
   {
+    real_time = true;
+    real_time = false;
+    count = 0;
+
     hubo = world->getSkeleton(0);
     LSR = hubo->getDof("LSR")->getIndexInSkeleton();
     RSR = hubo->getDof("RSR")->getIndexInSkeleton();
+
+    l_hand = osgDart::InteractiveFramePtr(new osgDart::InteractiveFrame(
+                                            hubo->getBodyNode("Body_LWR"), "left hand"));
+    for(size_t i=0; i < 3; ++i)
+      for(size_t j=0; j < 3; ++j)
+        l_hand->getTool((osgDart::InteractiveTool::Type)(i), j)->setEnabled(false);
+
+    r_hand = osgDart::InteractiveFramePtr(new osgDart::InteractiveFrame(
+                                            hubo->getBodyNode("Body_RWR"), "right hand"));
+
+    for(size_t i=0; i < 3; ++i)
+      for(size_t j=0; j < 3; ++j)
+        r_hand->getTool((osgDart::InteractiveTool::Type)(i), j)->setEnabled(false);
+
+    mWorld->addSimpleFrame(l_hand);
+    mWorld->addSimpleFrame(r_hand);
 
     firstLoop = true;
   }
@@ -1170,8 +1214,13 @@ public:
       firstLoop = false;
     }
 
-    double time = mTimer.time_s();
-    size_t count = (size_t)(floor(frequency*time)) % mTrajectory.size();
+    if(real_time)
+    {
+      double time = mTimer.time_s();
+      count = (size_t)(floor(frequency*time)) % mTrajectory.size();
+    }
+    else
+      ++count;
 
     double dt = 1.0/frequency;
 
@@ -1203,6 +1252,12 @@ public:
 
 protected:
 
+  bool real_time;
+  size_t count;
+
+  osgDart::InteractiveFramePtr l_hand;
+  osgDart::InteractiveFramePtr r_hand;
+
   SkeletonPtr hubo;
   std::vector<Eigen::VectorXd> mTrajectory;
   size_t LSR;
@@ -1227,7 +1282,7 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
 {\
   alphas = getAlphas(a, index-1);\
   terms = T;\
-  system->setEqn(index, terms, alphas);\
+  system->addEqn(terms, alphas);\
 }
 
 #define ADD_END_EFFECTOR_OUTPUT( index1, index2, index3, index4, index5, index6, body, relativeTo )\
@@ -1242,7 +1297,13 @@ Eigen::VectorXd getAlphas(const YAML::Node& a, size_t index)
   alphaArray.push_back(getAlphas(a, index6-1));\
   std::shared_ptr<EndEffectorConstraint> f =\
       std::make_shared<EndEffectorConstraint>(ee, alphaArray);\
-  f->mIK->getTarget()->setParentFrame(relativeTo);\
+  f->refFrame = relativeTo;\
+  f->mIK->getErrorMethod().setLinearBounds(\
+      Eigen::Vector3d::Constant(-1e-8),\
+      Eigen::Vector3d::Constant( 1e-8));\
+  f->mIK->getErrorMethod().setAngularBounds(\
+      Eigen::Vector3d::Constant(-1e-8),\
+      Eigen::Vector3d::Constant( 1e-8));\
   bezierFuncs.push_back(f);\
   problem->addEqConstraint(f);\
 }
@@ -1314,27 +1375,12 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   q_plus = x_plus.block(0,0,hubo->getNumDofs(),1);
   q_minus = x_minus.block(0,0,hubo->getNumDofs(),1);
 
-//  YAML::Node p = params["p"];
-//  std::cout << "p: ";
-//  for(size_t i=0; i < p.size(); ++i)
-//    std::cout << p[i].as<double>() << "\t";
-//  std::cout << "\n\n";
 
   YAML::Node a = params["a"];
-//  std::cout << "a:\n";
-//  for(size_t i=0; i < a.size(); ++i)
-//  {
-//    std::cout << i << ") ";
-//    YAML::Node entry = a[i];
-//    for(size_t j=0; j < entry.size(); ++j)
-//      std::cout << entry[j].as<double>() << "\t";
-//    std::cout << "\n";
-//  }
-//  std::cout << "\n";
 
-//  std::shared_ptr<GradientDescentSolver> solver = std::make_shared<GradientDescentSolver>();
-//  solver->setStepSize(1.0);
+
   std::shared_ptr<WalkSolver> solver = std::make_shared<WalkSolver>();
+  solver->hubo = hubo;
   std::shared_ptr<Problem> problem = std::make_shared<Problem>();
   problem->setDimension(hubo->getNumDofs());
   solver->setProblem(problem);
@@ -1355,6 +1401,7 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
   problem->setUpperBounds(upper);
 
 
+  std::cout << "Setting up linear system" << std::endl;
 
   std::shared_ptr<LinearComboSystem<eqns,dofs>> system =
       std::make_shared<LinearComboSystem<eqns,dofs>>();
@@ -1377,7 +1424,7 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
     ADD_LINEAR_OUTPUT(11, make_terms(hubo, 1.0, st+"WP"));
   }
 
-  ADD_LINEAR_OUTPUT(12, make_terms(hubo, 1.0, st+"WR"));
+//  ADD_LINEAR_OUTPUT(12, make_terms(hubo, 1.0, st+"WR"));
   ADD_LINEAR_OUTPUT(13, make_terms(hubo, 1.0, "TSY"));
 
   if(!hand_constraints)
@@ -1390,25 +1437,20 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
     ADD_LINEAR_OUTPUT(19, make_terms(hubo, 1.0, sw+"WP"));
   }
 
-  ADD_LINEAR_OUTPUT(20, make_terms(hubo, 1.0, sw+"WR"));
+//  ADD_LINEAR_OUTPUT(20, make_terms(hubo, 1.0, sw+"WR"));
 
-//  BodyNode* knee = hubo->getBodyNode("Body_"+st+"KP");
-//  double thighLength = std::abs(knee->getRelativeTransform().translation()[2]);
-//  double thighLength = std::abs(knee->getTransform(knee->getParentBodyNode()->getParentBodyNode()->getParentBodyNode()).translation()[2]);
   double hLength = 0.1401;
   double thighLength = 0.3299;
-//  std::cout << "thigh: " << thighLength << std::endl;
-//  BodyNode* ankle = hubo->getBodyNode("Body_"+st+"AP");
-//  double calfLength = std::abs(ankle->getRelativeTransform().translation()[2]);
   double calfLength = 0.33;
 
-//  std::cout << "calf: " << calfLength << std::endl;
-//  double legRatio = calfLength/(thighLength+calfLength);
   double legRatio = calfLength/(thighLength+calfLength+hLength);
 
   std::shared_ptr<Holonomic> h = std::make_shared<Holonomic>(
         hubo->getBodyNode("Body_"+st+"AR"));
   problem->addEqConstraint(h);
+
+
+  std::cout << "Setting up feet" << std::endl;
 
   if(double_support)
   {
@@ -1447,7 +1489,7 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
 
 
   solver->setNumMaxIterations(1000);
-  solver->setTolerance(1e-6);
+  solver->setTolerance(1e-8);
 
 //  hubo->setPositions(q_plus);
   hubo->setPositions(lastPositions);
@@ -1475,6 +1517,8 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
       tau_max = (pf - p_plus)/(p_minus - p_plus);
       std::cout<< "Tau(max):" << tau_max << "\n";
   }
+
+
   do
   {
     double p = computeP(time, p0, pdot0, vd);
@@ -1524,6 +1568,13 @@ SkeletonPtr createHubo()
 
   hubo->getDof("REP")->setPositionUpperLimit(0.0);
   hubo->getDof("LEP")->setPositionUpperLimit(0.0);
+
+  hubo->getDof("LSY")->setPositionLowerLimit(-90.0*M_PI/180.0);
+  hubo->getDof("LSY")->setPositionUpperLimit( 90.0*M_PI/180.0);
+
+  hubo->getDof("RSY")->setPositionLowerLimit(-90.0*M_PI/180.0);
+  hubo->getDof("RSY")->setPositionUpperLimit( 90.0*M_PI/180.0);
+
 
 //  std::cout << "REP: " << hubo->getDof("REP")->getPositionLowerLimit()
 //            << " : " << hubo->getDof("REP")->getPositionUpperLimit() << std::endl;
@@ -1642,7 +1693,10 @@ int main()
 //  std::string yaml = PROJECT_PATH"params_2015-09-03T01-51-0400.yaml";
 //  std::string yaml = PROJECT_PATH"params_2015-09-07T12-50-0400.yaml";
 //  std::string yaml = PROJECT_PATH"params_2015-09-08T21-24-0400.yaml";
-  std::string yaml = PROJECT_PATH"params_2015-09-12T13-44-0400.yaml";
+//  std::string yaml = PROJECT_PATH"params_2015-09-12T13-44-0400.yaml";
+
+
+  std::string yaml = PROJECT_PATH"params_2015-09-14T02-56-0400.yaml";
 
 
   bool loadfile = false;
@@ -1651,6 +1705,11 @@ int main()
 
   bool hand_constraints = false;
   hand_constraints = true;
+
+
+  bool startWithLeft = true;
+  startWithLeft = false;
+
 
 
   std::string dump_name = PROJECT_PATH"trajectory.dat";
@@ -1733,8 +1792,6 @@ int main()
     osg::Timer timer;
     timer.setStartTick();
 
-    bool startWithLeft = true;
-    startWithLeft = true;
 
     std::vector<Eigen::VectorXd> leftStartDS;
     std::vector<Eigen::VectorXd> leftStartSS;
@@ -1747,10 +1804,13 @@ int main()
     }
 
     std::vector<Eigen::VectorXd> rightWalk = hand_constraints?
-          setupAndSolveProblem<12,33>(hubo, rightWalkParams, "R", "L", true)
+//          setupAndSolveProblem<12,33>(hubo, rightWalkParams, "R", "L", true)
+          setupAndSolveProblem<10,33>(hubo, rightWalkParams, "R", "L", true)
         : setupAndSolveProblem<24,33>(hubo, rightWalkParams, "R", "L");
+
     std::vector<Eigen::VectorXd> leftWalk = hand_constraints?
-          setupAndSolveProblem<12,33>(hubo, leftWalkParams, "L", "R", true)
+//          setupAndSolveProblem<12,33>(hubo, leftWalkParams, "L", "R", true)
+          setupAndSolveProblem<10,33>(hubo, leftWalkParams, "L", "R", true)
         : setupAndSolveProblem<24,33>(hubo, leftWalkParams, "L", "R");
 
     std::cout << "Computation Time: " << timer.time_s() << std::endl;
