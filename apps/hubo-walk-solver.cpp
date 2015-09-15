@@ -988,14 +988,14 @@ public:
     else if(node->getName() == "Body_LWR")
     {
       mIK->setGradientMethod<HuboArmIK>("Body_LSP");
-      mIK->getAnalytical()->setExtraDofUtilization(
-            IK::Analytical::PRE_ANALYTICAL);
+//      mIK->getAnalytical()->setExtraDofUtilization(
+//            IK::Analytical::PRE_ANALYTICAL);
     }
     else if(node->getName() == "Body_RWR")
     {
       mIK->setGradientMethod<HuboArmIK>("Body_RSP");
-      mIK->getAnalytical()->setExtraDofUtilization(
-            IK::Analytical::PRE_ANALYTICAL);
+//      mIK->getAnalytical()->setExtraDofUtilization(
+//            IK::Analytical::PRE_ANALYTICAL);
     }
     else
     {
@@ -1424,7 +1424,7 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
     ADD_LINEAR_OUTPUT(11, make_terms(hubo, 1.0, st+"WP"));
   }
 
-//  ADD_LINEAR_OUTPUT(12, make_terms(hubo, 1.0, st+"WR"));
+  ADD_LINEAR_OUTPUT(12, make_terms(hubo, 1.0, st+"WR"));
   ADD_LINEAR_OUTPUT(13, make_terms(hubo, 1.0, "TSY"));
 
   if(!hand_constraints)
@@ -1437,7 +1437,7 @@ std::vector<Eigen::VectorXd> setupAndSolveProblem(
     ADD_LINEAR_OUTPUT(19, make_terms(hubo, 1.0, sw+"WP"));
   }
 
-//  ADD_LINEAR_OUTPUT(20, make_terms(hubo, 1.0, sw+"WR"));
+  ADD_LINEAR_OUTPUT(20, make_terms(hubo, 1.0, sw+"WR"));
 
   double hLength = 0.1401;
   double thighLength = 0.3299;
@@ -1696,7 +1696,7 @@ int main()
 //  std::string yaml = PROJECT_PATH"params_2015-09-12T13-44-0400.yaml";
 
 
-  std::string yaml = PROJECT_PATH"params_2015-09-14T02-56-0400.yaml";
+  std::string yaml = PROJECT_PATH"params_2015-09-15T00-40-0400.yaml";
 
 
   bool loadfile = false;
@@ -1805,12 +1805,12 @@ int main()
 
     std::vector<Eigen::VectorXd> rightWalk = hand_constraints?
 //          setupAndSolveProblem<12,33>(hubo, rightWalkParams, "R", "L", true)
-          setupAndSolveProblem<10,33>(hubo, rightWalkParams, "R", "L", true)
+          setupAndSolveProblem<12,33>(hubo, rightWalkParams, "R", "L", true)
         : setupAndSolveProblem<24,33>(hubo, rightWalkParams, "R", "L");
 
     std::vector<Eigen::VectorXd> leftWalk = hand_constraints?
 //          setupAndSolveProblem<12,33>(hubo, leftWalkParams, "L", "R", true)
-          setupAndSolveProblem<10,33>(hubo, leftWalkParams, "L", "R", true)
+          setupAndSolveProblem<12,33>(hubo, leftWalkParams, "L", "R", true)
         : setupAndSolveProblem<24,33>(hubo, leftWalkParams, "L", "R");
 
     std::cout << "Computation Time: " << timer.time_s() << std::endl;
