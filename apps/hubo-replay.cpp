@@ -45,6 +45,61 @@ const double frequency = 1000.0;
 using namespace dart::dynamics;
 using namespace dart::simulation;
 using namespace osgDart;
+class InputHandler : public osgGA::GUIEventHandler
+{
+public:
+
+  InputHandler(osgDart::Viewer* viewer)
+    : mViewer(viewer),
+      recording(false)
+  {
+
+  }
+
+  virtual bool handle(const osgGA::GUIEventAdapter& ea,
+                      osgGA::GUIActionAdapter&) override
+  {
+
+    if( osgGA::GUIEventAdapter::KEYDOWN == ea.getEventType() )
+    {
+
+      if( ea.getKey() == 'p')
+      {
+        if(recording)
+        {
+          mViewer->pauseRecording();
+          recording = false;
+        }
+        else
+        {
+          mViewer->record(PROJECT_PATH"dump");
+          recording = true;
+        }
+
+        return true;
+      }
+
+      if( ea.getKey() == 'o')
+      {
+        time_t now = time(0);
+        std::string timestr = ctime(&now);
+        timestr.erase(timestr.end()-1, timestr.end());
+        mViewer->captureScreen(PROJECT_PATH"dump/screenshot - "+timestr+".png");
+        return true;
+      }
+
+    }
+
+    return false;
+  }
+
+protected:
+
+  osgDart::Viewer* mViewer;
+
+  bool recording;
+
+};
 
 class SimulationWorld : public osgDart::WorldNode
 {
@@ -267,6 +322,8 @@ int main()
   osgDart::Viewer viewer;
   viewer.addWorldNode(node);
 //  viewer.simulate(true);
+
+  viewer.addEventHandler(new InputHandler(&viewer));
 
   viewer.setUpViewInWindow(0, 0, 1280, 960);
 
