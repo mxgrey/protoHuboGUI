@@ -143,7 +143,7 @@ public:
 
   /// baseLink should be Body_LHY or Body_RHY
   HuboLegIK(InverseKinematics* _ik, const std::string& baseLinkName)
-    : Analytical(_ik, "HuboLegIK_"+baseLinkName),
+    : Analytical(_ik, "HuboLegIK_"+baseLinkName, Analytical::Properties()),
       configured(false),
       mBaseLinkName(baseLinkName)
   {

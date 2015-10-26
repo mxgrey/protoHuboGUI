@@ -182,7 +182,7 @@ class HuboArmIK : public InverseKinematics::Analytical
 public:
 
   HuboArmIK(InverseKinematics* _ik, const std::string& baseLinkName)
-    : Analytical(_ik, "HuboArmIK_"+baseLinkName),
+    : Analytical(_ik, "HuboArmIK_"+baseLinkName, Analytical::Properties()),
       configured(false),
       mBaseLinkName(baseLinkName)
   {
@@ -462,7 +462,7 @@ public:
 
   /// baseLink should be Body_LHY or Body_RHY
   HuboLegIK(InverseKinematics* _ik, const std::string& baseLinkName)
-    : Analytical(_ik, "HuboLegIK_"+baseLinkName),
+    : Analytical(_ik, "HuboLegIK_"+baseLinkName, Analytical::Properties()),
       configured(false),
       mBaseLinkName(baseLinkName)
   {
@@ -873,6 +873,8 @@ public:
     mOperator.setJointIndices(indexNames);
 
     solve = true;
+
+    mLoadedTrajectory = false;
   }
 
   void setMovement(const std::vector<bool>& moveComponents)
@@ -907,8 +909,9 @@ public:
     }
   }
 
-  void loadTrajectory()
+  void loadWaypoint()
   {
+    mLoadedTrajectory = false;
     std::string filename = "/home/grey/projects/protoHuboGUI/trajectory.dat";
 
     std::vector<Eigen::VectorXd> raw_trajectory;
@@ -932,9 +935,79 @@ public:
     mHubo->setPositions(raw_trajectory[0]);
   }
 
+  void loadTrajectory()
+  {
+    mLoadedTrajectory = true;
+    std::string filename = "/home/grey/projects/protoHuboGUI/trajectory.dat";
+
+    std::vector<Eigen::VectorXd> raw_trajectory;
+    std::ifstream file;
+    file.open(filename);
+    if(file.is_open())
+    {
+      while(!file.eof())
+      {
+        raw_trajectory.push_back(Eigen::VectorXd(mHubo->getNumDofs()));
+        Eigen::VectorXd& q = raw_trajectory.back();
+        for(size_t i=0; i < mHubo->getNumDofs(); ++i)
+          file >> q[i];
+      }
+
+      // TODO: Figure out how to avoid needing this
+      raw_trajectory.pop_back();
+    }
+    file.close();
+
+    mOperator.setInterpolationMode(HUBO_PATH_RAW);
+    mOperator.clearWaypoints();
+
+    for(size_t i=0; i < raw_trajectory.size(); ++i)
+    {
+      mHubo->setPositions(raw_trajectory[i]);
+      mOperator.addWaypoint(mHubo->getPositions(mOperatorIndices));
+    }
+
+    HuboPath::Trajectory traj = mOperator.getCurrentTrajectory();
+
+    std::cout << "Loaded trajectory with " << traj.size() - 1
+              << " waypoints" << std::endl;
+
+    if(!traj.check_limits())
+      mTrajectoryValid = false;
+
+    mTrajectory.clear();
+    for(size_t i=0; i < traj.size(); ++i)
+    {
+      Eigen::VectorXd q(mHubo->getNumDofs());
+      for(size_t j=0; j < 6; ++j)
+        q[j] = mHubo->getDof(j)->getPosition();
+
+      const IndexArray& indexMap = mOperator.getIndexMap();
+      for(size_t j=6; j < mHubo->getNumDofs(); ++j)
+        q[j] = traj[i].references[indexMap[j-6]];
+
+      mTrajectory.push_back(q);
+    }
+
+    checkTrajectoryCollisions();
+
+    mTrajectoryStep = 0;
+    if(mTrajectoryValid)
+    {
+      mPlayTrajectory = true;
+    }
+    else
+    {
+      toggleEndpointVisibility();
+      mPlayTrajectory = false;
+    }
+  }
+
   void runTrajectory()
   {
-    processTrajectory();
+    if(!mLoadedTrajectory)
+      processTrajectory();
+
     if(mTrajectoryValid)
       mOperator.sendNewTrajectory();
 
@@ -950,34 +1023,12 @@ public:
     }
   }
 
-  void processTrajectory()
+  void checkTrajectoryCollisions()
   {
-    mOperator.clearWaypoints();
-    mOperator.addWaypoint(mHubo->getPositions(mOperatorIndices));
-    HuboPath::Trajectory traj = mOperator.getCurrentTrajectory();
-
-    traj.interpolate();
-    std::cout << "Raw traj size: " << traj.size() << std::endl;
-
-    size_t length = traj.size();
-    mTrajectory.clear();
-    for(size_t i=0; i < length; ++i)
-    {
-      Eigen::VectorXd q(mHubo->getNumDofs());
-      for(size_t j=0; j < 6; ++j)
-        q[j] = mHubo->getDof(j)->getPosition();
-
-      const IndexArray& indexMap = mOperator.getIndexMap();
-      for(size_t j=6; j < mHubo->getNumDofs(); ++j)
-        q[j] = traj[i].references[indexMap[j-6]];
-
-      mTrajectory.push_back(q);
-    }
-
     Eigen::VectorXd originalPositions = mHubo->getPositions();
     std::cout << "Checking for collisions" << std::endl;
     mTrajectoryValid = true;
-    for(size_t i=0; i < length; ++i)
+    for(size_t i=0; i < mTrajectory.size(); ++i)
     {
       mHubo->setPositions(mTrajectory[i]);
       dart::collision::CollisionDetector* detector =
@@ -1016,6 +1067,35 @@ public:
     }
   }
 
+  void processTrajectory()
+  {
+    mLoadedTrajectory = false;
+    mOperator.setInterpolationMode(HUBO_PATH_SPLINE);
+    mOperator.clearWaypoints();
+    mOperator.addWaypoint(mHubo->getPositions(mOperatorIndices));
+    HuboPath::Trajectory traj = mOperator.getCurrentTrajectory();
+
+    traj.interpolate();
+    std::cout << "Raw traj size: " << traj.size() << std::endl;
+
+    size_t length = traj.size();
+    mTrajectory.clear();
+    for(size_t i=0; i < length; ++i)
+    {
+      Eigen::VectorXd q(mHubo->getNumDofs());
+      for(size_t j=0; j < 6; ++j)
+        q[j] = mHubo->getDof(j)->getPosition();
+
+      const IndexArray& indexMap = mOperator.getIndexMap();
+      for(size_t j=6; j < mHubo->getNumDofs(); ++j)
+        q[j] = traj[i].references[indexMap[j-6]];
+
+      mTrajectory.push_back(q);
+    }
+
+    checkTrajectoryCollisions();
+  }
+
   void customPreRefresh() override
   {
     if(mPlayTrajectory)
@@ -1038,6 +1118,7 @@ public:
         std::cout << "finished playing trajectory" << std::endl;
         mPlayTrajectory = false;
         mTrajectoryStep = 0;
+        mHubo->setPositions(mTrajectory.back());
         return;
       }
 
@@ -1051,6 +1132,8 @@ public:
 
     if(mAnyMovement)
     {
+      mLoadedTrajectory = false;
+
       Eigen::Isometry3d old_tf = mHubo->getBodyNode(0)->getWorldTransform();
       Eigen::Isometry3d new_tf = Eigen::Isometry3d::Identity();
       Eigen::Vector3d forward = old_tf.linear().col(0);
@@ -1110,8 +1193,11 @@ public:
       mHubo->getJoint(0)->setPositions(FreeJoint::convertToPositions(new_tf));
     }
 
-    if(solve)
-      mHubo->getIK(true)->solve();
+    if(!mLoadedTrajectory)
+    {
+      if(solve)
+        mHubo->getIK(true)->solve();
+    }
 
     refreshActualHubo();
   }
@@ -1119,6 +1205,8 @@ public:
   bool mAmplifyMovement;
 
 protected:
+
+  bool mLoadedTrajectory;
 
   SkeletonPtr mHubo;
   size_t iter;
@@ -1230,7 +1318,7 @@ public:
 
       if( ea.getKey() == osgGA::GUIEventAdapter::KEY_Tab )
       {
-        mTeleop->loadTrajectory();
+        mTeleop->loadWaypoint();
         return true;
       }
 
@@ -1250,6 +1338,12 @@ public:
           if( i < 2 || 4 < i )
             mHubo->getDof(i)->setPosition(mRestConfig[i]);
         }
+        return true;
+      }
+
+      if( ea.getKey() == 'T' )
+      {
+        mTeleop->loadTrajectory();
         return true;
       }
 
