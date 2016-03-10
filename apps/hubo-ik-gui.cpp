@@ -189,7 +189,7 @@ public:
     // Do nothing
   }
 
-  std::unique_ptr<GradientMethod> clone(InverseKinematics* _newIK) const override
+  std::unique_ptr<dart::dynamics::InverseKinematics::GradientMethod> clone(InverseKinematics* _newIK) const override
   {
     return std::unique_ptr<GradientMethod>(new HuboArmIK(_newIK, mBaseLinkName));
   }
@@ -812,6 +812,20 @@ public:
     }
   }
 
+  void resetPositions()
+  {
+    solve = false;
+    for(size_t i=6; i<mHubo->getNumDofs(); ++i)
+    {
+      mHubo->getDof(i)->setPosition(0.0);
+    }
+  }
+
+  void resumeSolving()
+  {
+    solve = true;
+  }
+
 #define ADD_ADJACENT_PAIR( X, Y ) adjacentPairs.push_back(std::pair<std::string,std::string>( "Body_" #X , "Body_" #Y ));
 
   void disableAdjacentPairs(const SkeletonPtr& hubo)
@@ -1390,6 +1404,13 @@ public:
         return true;
       }
 
+      if( '0' == ea.getKey() )
+      {
+        std::cout << "Resetting positions" << std::endl;
+        mTeleop->resetPositions();
+        return true;
+      }
+
       if(ea.getKey() == osgGA::GUIEventAdapter::KEY_Shift_L)
         mTeleop->mAmplifyMovement = true;
 
@@ -1417,6 +1438,8 @@ public:
 
       if(mOptimizationKey == ea.getKey())
       {
+        mTeleop->resumeSolving();
+
         if(mPosture)
           mPosture->enforceIdealPosture = true;
 
