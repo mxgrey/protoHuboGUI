@@ -7,6 +7,16 @@ add_definitions("-Wall -Wextra")
 set(CMAKE_DEBUG_POSTFIX "d")
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
+# Configure files
+message(STATUS "")
+message(STATUS " [ Configured files ] ")
+
+set(hubo_config_in ${CMAKE_SOURCE_DIR}/hubo/config.hpp.in)
+set(hubo_config_out ${CMAKE_BINARY_DIR}/hubo/config.hpp)
+message(STATUS ${hubo_config_out})
+configure_file(${hubo_config_in} ${hubo_config_out} @ONLY)
+install(FILES ${hubo_config_out} DESTINATION ${CMAKE_INSTALL_PREFIX}/hubo)
+
 # Eigen
 find_package(EIGEN3 3.0.5 QUIET)
 if(EIGEN3_FOUND)
@@ -39,8 +49,14 @@ endif()
 find_package(OpenSceneGraph 3.0 QUIET
   COMPONENTS osg osgViewer osgManipulator osgGA osgDB)
 
+include_directories(${PROJECT_SOURCE_DIR})
+include_directories(${CMAKE_BINARY_DIR})
+
 list(APPEND CMAKE_CXX_FLAGS "-std=c++11 ${CMAKE_CXX_FLAGS}")
 #list(APPEND CMAKE_CXX_FLAGS "-std=c++0x ${CMAKE_CXX_FLAGS}")
+
+# Customized kinematics for Hubo
+add_subdirectory(hubo)
 
 file(GLOB apps_source "apps/*.cpp")
 LIST(SORT apps_source)
@@ -57,3 +73,4 @@ target_link_libraries(hubo-ik-gui dart-core dart osgDart ${OPENSCENEGRAPH_LIBRAR
 target_link_libraries(hubo-sim dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES} boost_system assimp HuboCan)
 target_link_libraries(hubo-walk-solver dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES} boost_system assimp yaml-cpp HuboCan)
 target_link_libraries(hubo-replay dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES} boost_system assimp yaml-cpp)
+target_link_libraries(hubo-quasi-walk dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES} boost_system assimp HuboCan hubo)
