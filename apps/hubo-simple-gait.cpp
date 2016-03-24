@@ -70,10 +70,19 @@ const double SlowDownFactor = 5.0;
 const size_t DefaultNumSteps = 4;
 
 
+const double BeginScooch = 0.8;
+const double MaxScoochFactor = 0.3;
+
 
 
 const double frequency = 200.0;
 //const double frequency = 10.0;
+
+//==============================================================================
+double computeSwayY(double swayY, bool left)
+{
+  return left? -swayY : swayY;
+}
 
 //==============================================================================
 std::vector<Eigen::VectorXd> shiftOver(
@@ -106,7 +115,7 @@ std::vector<Eigen::VectorXd> shiftOver(
     end_q.block<2,1>(3,0) =
         stance->getWorldTransform().translation().block<2,1>(0,0);
     end_q[3] += swayOffset[0];
-    end_q[4] += leftStep? -swayOffset[1] : swayOffset[1];
+    end_q[4] += computeSwayY(swayOffset[1], leftStep);
   }
 
   stance->getIK(true)->getTarget()->setTransform(
@@ -176,10 +185,25 @@ bool solveSwingFoot(const SkeletonPtr& robot,
 }
 
 //==============================================================================
+void setSupport(EndEffector* stance, Eigen::Vector3d com)
+{
+  const double tol = 1e-4;
+  dart::math::SupportGeometry geom = stance->getSupport()->getGeometry();
+  com[2] = 0.0;
+  geom[0] = com + Eigen::Vector3d( tol,  tol, 0);
+  geom[1] = com + Eigen::Vector3d(-tol,  tol, 0);
+  geom[2] = com + Eigen::Vector3d(-tol, -tol, 0);
+  geom[3] = com + Eigen::Vector3d( tol, -tol, 0);
+
+  stance->getSupport()->setGeometry(geom);
+}
+
+//==============================================================================
 std::vector<Eigen::VectorXd> stepForward(
     const dart::dynamics::SkeletonPtr& robot,
     double stepDist,
     double stepHeight,
+    const Eigen::Vector2d& swayOffset,
     StepType stepType,
     bool leftStep,
     bool finish)
@@ -199,16 +223,9 @@ std::vector<Eigen::VectorXd> stepForward(
   stance->getSupport()->setActive(true);
   swing->getSupport()->setActive(false);
 
-  const double tol = 1e-4;
-  dart::math::SupportGeometry geom = stance->getSupport()->getGeometry();
-  Eigen::Vector3d com = robot->getCOM(stance);
-  com[2] = 0.0;
-  geom[0] = com + Eigen::Vector3d( tol,  tol, 0);
-  geom[1] = com + Eigen::Vector3d(-tol,  tol, 0);
-  geom[2] = com + Eigen::Vector3d(-tol, -tol, 0);
-  geom[3] = com + Eigen::Vector3d( tol, -tol, 0);
+  const Eigen::Vector3d com = robot->getCOM(stance);
+  setSupport(stance, com);
 
-  stance->getSupport()->setGeometry(geom);
   stance->getIK(true)->getTarget()->setTransform(
         stance->getWorldTransform());
   const Eigen::Isometry3d stanceTf = stance->getWorldTransform();
@@ -253,7 +270,7 @@ std::vector<Eigen::VectorXd> stepForward(
   }
   else if(SQUARE == stepType)
   {
-    const size_t res = 5;
+    size_t res = 5;
     for(size_t i=0; i < res+1; ++i)
     {
       const double t = (double)(i)/(double)(res);
@@ -286,12 +303,62 @@ std::vector<Eigen::VectorXd> stepForward(
       walk.push_back(robot->getPositions());
     }
 
+    res = 20;
     for(size_t i=0; i < res+1; ++i)
     {
       const double t = (double)(i)/(double)(res);
       const Eigen::Vector2d x = v;
       const double z = h*(1-t);
       const double theta = R;
+
+
+      if(t >= BeginScooch)
+      {
+        Eigen::VectorXd current = robot->getPositions();
+
+        Eigen::VectorXd end_q = robot->getPositions();
+
+        robot->getEndEffector("l_foot")->getIK(true)->solve();
+        robot->getEndEffector("r_foot")->getIK(true)->solve();
+
+        if(finish)
+        {
+          end_q.block<2,1>(3,0) =
+              (stance->getWorldTransform().translation().block<2,1>(0,0)
+              + swing->getWorldTransform().translation().block<2,1>(0,0)) / 2.0;
+          end_q[3] += swayOffset[0];
+        }
+        else
+        {
+          end_q.block<2,1>(3,0) =
+              swing->getWorldTransform().translation().block<2,1>(0,0);
+//              stance->getWorldTransform().translation().block<2,1>(0,0);
+          end_q[3] += swayOffset[0];
+          end_q[4] += computeSwayY(swayOffset[1], !leftStep);
+        }
+
+        robot->getJoint(0)->setPositions(end_q.block<6,1>(0,0));
+//        solveSwingFoot(robot, swing, swingStart, axis, posture,
+//                       x, 0, theta);
+
+        robot->getEndEffector("l_foot")->getIK(true)->solve();
+        robot->getEndEffector("r_foot")->getIK(true)->solve();
+
+        Eigen::Vector2d target = robot->getCOM().block<2,1>(0,0);
+        std::cout << "target: " << target.transpose();
+        Eigen::Vector2d com2d = com.block<2,1>(0,0);
+
+        Eigen::Vector3d scooched_com = Eigen::Vector3d::Zero();
+        double scale = (t-BeginScooch)/(1-BeginScooch)*MaxScoochFactor;
+        scooched_com.block<2,1>(0,0) = scale*(target - com2d) + com2d;
+        std::cout << " | " << com2d.transpose() << " -> (" << scale << ") -> " << scooched_com.transpose() << std::endl;
+
+
+        setSupport(stance, scooched_com);
+
+        robot->setPositions(current);
+      }
+
 
       if(!solveSwingFoot(robot, swing, swingStart, axis, posture,
                          x, z, theta))
@@ -334,8 +401,8 @@ std::vector<std::vector<Eigen::VectorXd>> interpolateSteps(
 
     problem->addEqConstraint(balance);
 //    std::cout << "Forward" << std::endl;
-    walk.push_back(stepForward(robot, stepDist, stepHeight, stepType,
-                               i%2==0, i==numSteps-1));
+    walk.push_back(stepForward(robot, stepDist, stepHeight, swayOffset,
+                               stepType, i%2==0, i==numSteps-1));
   }
 
   problem->removeEqConstraint(balance);
@@ -529,7 +596,7 @@ int main()
 
 
   bool operate = true;
-//  operate = false;
+  operate = false;
 
   if(operate)
   {
