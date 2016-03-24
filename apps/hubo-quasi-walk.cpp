@@ -582,7 +582,7 @@ int main()
   locations.push_back(robot->getPositions());
 
 //  locations[1][3] += 3*DefaultStepLength;
-  locations[1][3] += 6*DefaultStepLength;
+  locations[1][3] += 4*DefaultStepLength;
 //  locations[1][3] += 2.0;
 
   std::vector<size_t> stepRanges;
