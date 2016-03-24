@@ -53,8 +53,10 @@ using namespace dart::simulation;
 
 const double DefaultStepLength = 0.13;
 
-const double DefaultSwayOffset_X = -0.14;
+const double DefaultSwayOffset_X = -0.14 + 0.0;
 const double DefaultSwayOffset_Y = 0.0;
+
+const double SlowDownFactor = 5.0;
 
 const size_t DefaultNumSteps = 4;
 
@@ -86,6 +88,7 @@ std::vector<Eigen::VectorXd> shiftOver(
     end_q.block<2,1>(3,0) =
         (stance->getWorldTransform().translation().block<2,1>(0,0)
         + swing->getWorldTransform().translation().block<2,1>(0,0)) / 2.0;
+    end_q[3] += swayOffset[0];
   }
   else
   {
@@ -371,9 +374,24 @@ int main()
     indexNames.push_back(dof->getName());
   }
   mOperator.setJointIndices(indexNames);
+  mOperator.setInterpolationMode(HUBO_PATH_OPTIMAL);
+
+  robot->setPositions(walk[0][0]);
+  mOperator.addWaypoint(robot->getPositions(opIndices));
 
   HuboPath::Trajectory trajectory = mOperator.getCurrentTrajectory();
-  trajectory.elements.clear();
+  {
+    const HuboCan::HuboDescription& desc = trajectory.desc;
+    for(size_t i=0; i < desc.getJointCount(); ++i)
+    {
+      hubo_joint_info_t& info = desc.joints[i]->info;
+      hubo_joint_limits_t& limits = info.limits;
+
+      limits.nominal_speed /= SlowDownFactor;
+      limits.nominal_accel /= SlowDownFactor;
+    }
+  }
+  trajectory.interpolate();
 
   for(size_t s=0; s < walk.size(); ++s)
   {
@@ -396,8 +414,8 @@ int main()
       hubo_joint_info_t& info = desc.joints[i]->info;
       hubo_joint_limits_t& limits = info.limits;
 
-      limits.nominal_speed /= 5.0;
-      limits.nominal_accel /= 5.0;
+      limits.nominal_speed /= SlowDownFactor;
+      limits.nominal_accel /= SlowDownFactor;
     }
     step_trajectory.interpolate();
 
