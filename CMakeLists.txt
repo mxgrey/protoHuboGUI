@@ -74,3 +74,4 @@ target_link_libraries(hubo-sim dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES
 target_link_libraries(hubo-walk-solver dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES} boost_system assimp yaml-cpp HuboCan)
 target_link_libraries(hubo-replay dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES} boost_system assimp yaml-cpp)
 target_link_libraries(hubo-quasi-walk dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES} boost_system assimp HuboCan hubo)
+target_link_libraries(hubo-simple-gait dart-core dart osgDart ${OPENSCENEGRAPH_LIBRARIES} boost_system assimp HuboCan hubo)

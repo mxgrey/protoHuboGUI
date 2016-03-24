@@ -611,7 +611,7 @@ int main()
   trajectory.interpolate();
 
   bool operate = true;
-//  operate = false;
+  operate = false;
 
   if(operate)
   {
