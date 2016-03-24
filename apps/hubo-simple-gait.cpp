@@ -47,18 +47,29 @@
 
 #include <HuboPath/Operator.hpp>
 
+enum StepType {
+  CYCLOID = 0,
+  SQUARE
+};
+
 using Trajectory = std::vector<Eigen::VectorXd>;
 using namespace dart::dynamics;
 using namespace dart::simulation;
 
 const double DefaultStepLength = 0.13;
+const double DefaultStepHeight = 0.06;
 
-const double DefaultSwayOffset_X = -0.14 + 0.0;
-const double DefaultSwayOffset_Y = 0.0;
+//const StepType DefaultStepType = CYCLOID;
+const StepType DefaultStepType = SQUARE;
+
+const double DefaultSwayOffset_X = -0.14 - 0.03939;
+const double DefaultSwayOffset_Y = 0.0837455;
 
 const double SlowDownFactor = 5.0;
 
 const size_t DefaultNumSteps = 4;
+
+
 
 
 const double frequency = 200.0;
@@ -117,15 +128,10 @@ std::vector<Eigen::VectorXd> shiftOver(
     const double t = (double)(i)/(double)(res);
 
     const Eigen::Vector6d x = x0 + t*dx;
-    std::cout << "x,y init:  " << x.block<2,1>(3,0).transpose() << std::endl;
     robot->getJoint(0)->setPositions(x);
-
 
     stance->getIK(true)->solve();
     swing->getIK(true)->solve();
-
-    std::cout << "x,y final: " << robot->getJoint(0)->getPositions().block<2,1>(3,0).transpose()
-        << "\n" << std::endl;
 
 //    if(!robot->getIK(true)->solve())
 //    {
@@ -141,9 +147,40 @@ std::vector<Eigen::VectorXd> shiftOver(
 }
 
 //==============================================================================
+bool solveSwingFoot(const SkeletonPtr& robot,
+                    EndEffector* swing,
+                    const Eigen::Isometry3d& swingStart,
+                    const Eigen::Vector3d& axis,
+                    const std::shared_ptr<hubo::RelaxedPosture>& posture,
+                    const Eigen::Vector2d& x, double z, double theta)
+{
+  Eigen::Isometry3d swingTarget = swingStart;
+  swingTarget.translation().block<2,1>(0,0) += x;
+  swingTarget.translation()[2] += z;
+  swingTarget.rotate(Eigen::AngleAxisd(theta, axis));
+
+  swing->getIK(true)->getTarget()->setTransform(swingTarget);
+
+  if(posture)
+    posture->enforceIdealPosture = true;
+
+  robot->getIK(true)->solve();
+
+  if(posture)
+    posture->enforceIdealPosture = false;
+
+  if(!robot->getIK(true)->solve())
+    return false;
+
+  return true;
+}
+
+//==============================================================================
 std::vector<Eigen::VectorXd> stepForward(
     const dart::dynamics::SkeletonPtr& robot,
     double stepDist,
+    double stepHeight,
+    StepType stepType,
     bool leftStep,
     bool finish)
 {
@@ -183,44 +220,87 @@ std::vector<Eigen::VectorXd> stepForward(
     swingGoal.translation()[0] += stepDist;
 
   const Eigen::Vector2d v =
-      (swingGoal.translation()-swingStart.translation()).block<2,1>(0,0)/(2*M_PI);
-  const double D = v.norm();
+      (swingGoal.translation()-swingStart.translation()).block<2,1>(0,0);
+//  const double h = v.norm()/stepDist*stepHeight;
+  const double h = stepHeight;
 
   Eigen::AngleAxisd aa(swingStart.linear().transpose()*swingGoal.linear());
-  const double R = aa.angle()/(2*M_PI);
+  const double R = aa.angle();
   const Eigen::Vector3d axis = aa.axis();
 
-  const size_t res = 10;
-  for(size_t i=0; i < res+1; ++i)
+  if(CYCLOID == stepType)
   {
-    const double t = (double)(i)/(double)(res)*2*M_PI;
-    const Eigen::Vector2d x = v*(t - sin(t));
-    const double z = D*(1 - cos(t));
-    const double theta = t*R;
+    const Eigen::Vector2d vc = v/(2*M_PI);
+    const double Rc = R/(2*M_PI);
+    const double hc = h/2.0;
 
-    Eigen::Isometry3d swingTarget = swingStart;
-    swingTarget.translation().block<2,1>(0,0) += x;
-    swingTarget.translation()[2] += z;
-    swingTarget.rotate(Eigen::AngleAxisd(theta, axis));
-
-    swing->getIK(true)->getTarget()->setTransform(swingTarget);
-
-    if(posture)
-      posture->enforceIdealPosture = true;
-
-    robot->getIK(true)->solve();
-
-    if(posture)
-      posture->enforceIdealPosture = false;
-
-    if(!robot->getIK(true)->solve())
+    const size_t res = 10;
+    for(size_t i=0; i < res+1; ++i)
     {
+      const double t = (double)(i)/(double)(res)*2*M_PI;
+      const Eigen::Vector2d x = vc*(t - sin(t));
+      const double z = hc*(1.0 - cos(t));
+      const double theta = t*Rc;
+
+      if(!solveSwingFoot(robot, swing, swingStart, axis, posture,
+                         x, z, theta))
+      {
+        std::cout << " ========== Could not solve swing at index #" << walk.size()+1 << std::endl;
+      }
+
       walk.push_back(robot->getPositions());
-      std::cout <<" ===== COULD NOT SOLVE FOOT STEP AT INDEX " << walk.size()-1 << std::endl;
-      return walk;
+    }
+  }
+  else if(SQUARE == stepType)
+  {
+    const size_t res = 5;
+    for(size_t i=0; i < res+1; ++i)
+    {
+      const double t = (double)(i)/(double)(res);
+      const Eigen::Vector2d x = Eigen::Vector2d::Zero();
+      const double z = h*t;
+      const double theta = 0;
+
+      if(!solveSwingFoot(robot, swing, swingStart, axis, posture,
+                         x, z, theta))
+      {
+        std::cout << " ========== Could not solve swing at index #" << walk.size()+1 << std::endl;
+      }
+
+      walk.push_back(robot->getPositions());
     }
 
-    walk.push_back(robot->getPositions());
+    for(size_t i=0; i < res+1; ++i)
+    {
+      const double t = (double)(i)/(double)(res);
+      const Eigen::Vector2d x = v*t;
+      const double z = h;
+      const double theta = t*R;
+
+      if(!solveSwingFoot(robot, swing, swingStart, axis, posture,
+                         x, z, theta))
+      {
+        std::cout << " ========== Could not solve swing at index #" << walk.size()+1 << std::endl;
+      }
+
+      walk.push_back(robot->getPositions());
+    }
+
+    for(size_t i=0; i < res+1; ++i)
+    {
+      const double t = (double)(i)/(double)(res);
+      const Eigen::Vector2d x = v;
+      const double z = h*(1-t);
+      const double theta = R;
+
+      if(!solveSwingFoot(robot, swing, swingStart, axis, posture,
+                         x, z, theta))
+      {
+        std::cout << " ========== Could not solve swing at index #" << walk.size()+1 << std::endl;
+      }
+
+      walk.push_back(robot->getPositions());
+    }
   }
 
   return walk;
@@ -229,8 +309,8 @@ std::vector<Eigen::VectorXd> stepForward(
 //==============================================================================
 std::vector<std::vector<Eigen::VectorXd>> interpolateSteps(
     const dart::dynamics::SkeletonPtr& robot,
-    double stepDist, const Eigen::Vector2d& swayOffset,
-    size_t numSteps)
+    double stepDist, double stepHeight, const Eigen::Vector2d& swayOffset,
+    StepType stepType, size_t numSteps)
 {
   std::shared_ptr<dart::constraint::BalanceConstraint> balance;
   const std::shared_ptr<dart::optimizer::Problem>& problem =
@@ -249,12 +329,13 @@ std::vector<std::vector<Eigen::VectorXd>> interpolateSteps(
     std::cout << "Generating Step #" << i << " ("
               << (double)(i)/(double)(numSteps) << "%)" << std::endl;
     problem->removeEqConstraint(balance);
-    std::cout << "Shift" << std::endl;
+//    std::cout << "Shift" << std::endl;
     walk.push_back(shiftOver(robot, swayOffset, i%2==0, false));
 
     problem->addEqConstraint(balance);
-    std::cout << "Forward" << std::endl;
-    walk.push_back(stepForward(robot, stepDist, i%2==0, i==numSteps-1));
+//    std::cout << "Forward" << std::endl;
+    walk.push_back(stepForward(robot, stepDist, stepHeight, stepType,
+                               i%2==0, i==numSteps-1));
   }
 
   problem->removeEqConstraint(balance);
@@ -358,9 +439,9 @@ int main()
   robot->getEndEffector("r_foot")->getIK(true)->getErrorMethod().setBounds(-bounds, bounds);
 
   std::vector<std::vector<Eigen::VectorXd>> walk = interpolateSteps(
-        robot, DefaultStepLength,
+        robot, DefaultStepLength, DefaultStepHeight,
         Eigen::Vector2d(DefaultSwayOffset_X, DefaultSwayOffset_Y),
-        DefaultNumSteps);
+        DefaultStepType, DefaultNumSteps);
 
   std::cout << "waypoints: " << walk.size() << std::endl;
 
@@ -448,7 +529,7 @@ int main()
 
 
   bool operate = true;
-  operate = false;
+//  operate = false;
 
   if(operate)
   {

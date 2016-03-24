@@ -1356,6 +1356,9 @@ public:
         for(size_t i=0; i < mHubo->getNumDofs(); ++i)
           std::cout << mHubo->getDof(i)->getPosition() << "\t";
         std::cout << "\n --- " << std::endl;
+
+        std::cout << mHubo->getBodyNode(0)->getTransform(
+                       mHubo->getEndEffector("r_foot")).matrix() << std::endl;
         return true;
       }
 
