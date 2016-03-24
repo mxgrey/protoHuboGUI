@@ -50,7 +50,8 @@ using Trajectory = std::vector<Eigen::VectorXd>;
 using namespace dart::dynamics;
 using namespace dart::simulation;
 
-const double DefaultStepLength = 0.13;
+//const double DefaultStepLength = 0.13;
+const double DefaultStepLength = 0.155;
 const double frequency = 200.0;
 
 //==============================================================================
@@ -333,6 +334,7 @@ std::vector<StepContext> generateSteps(
 //==============================================================================
 void interpolateSteps(const dart::dynamics::SkeletonPtr& robot,
                       std::vector<Eigen::VectorXd>& walk,
+                      std::vector<size_t>& stepRanges,
                       const StepContext& stepFrom,
                       const StepContext& stepTo,
                       bool excludeStep = false)
@@ -365,6 +367,7 @@ void interpolateSteps(const dart::dynamics::SkeletonPtr& robot,
     const Eigen::Vector3d axis = aa.axis();
 
     const size_t res = 10;
+    stepRanges.push_back(walk.size());
     for(size_t i=0; i < res+1; ++i)
     {
       const double t = (double)(i)/(double)(res)*2*M_PI;
@@ -420,6 +423,7 @@ void interpolateSteps(const dart::dynamics::SkeletonPtr& robot,
   swing->getSupport()->setActive(true);
 
   const size_t res = 10;
+  stepRanges.push_back(walk.size());
   for(size_t i=0; i < res+1; ++i)
   {
     const double t = (double)(i)/(double)(res);
@@ -441,7 +445,8 @@ void interpolateSteps(const dart::dynamics::SkeletonPtr& robot,
 //==============================================================================
 std::vector<Eigen::VectorXd> convertRouteToWalk(
     const dart::dynamics::SkeletonPtr& robot,
-    const Trajectory& trajectory)
+    const Trajectory& trajectory,
+    std::vector<size_t>& stepRanges)
 {
   const std::vector<Eigen::VectorXd>& route = trajectory;
 
@@ -469,12 +474,13 @@ std::vector<Eigen::VectorXd> convertRouteToWalk(
   StepContext firstStep = steps[0];
   firstStep.start_q = route[0];
   firstStep.end_q = steps[1].start_q;
-  interpolateSteps(robot, walk, firstStep, firstStep, true);
+  interpolateSteps(robot, walk, stepRanges, firstStep, firstStep, true);
+  stepRanges.clear();
   for(size_t i=0; i < steps.size()-1; ++i)
   {
     const StepContext& stepFrom = steps[i];
     const StepContext& stepTo = i < steps.size()-1? steps[i+1] : steps[i];
-    interpolateSteps(robot, walk, stepFrom, stepTo);
+    interpolateSteps(robot, walk, stepRanges, stepFrom, stepTo);
   }
 
   robot->getEndEffector("l_foot")->getIK(true)->getErrorMethod().setBounds(originalBoundsLeft);
@@ -569,15 +575,23 @@ protected:
 int main()
 {
   SkeletonPtr robot = hubo::DrcModel::create();
-  robot->getIK(true)->getSolver()->setNumMaxIterations(500);
+  robot->getIK(true)->getSolver()->setNumMaxIterations(1000);
 //  std::cout << robot->getIK(true)->getSolver()->getNumMaxIterations() << std::endl;
   std::vector<Eigen::VectorXd> locations;
   locations.push_back(robot->getPositions());
   locations.push_back(robot->getPositions());
-  locations[1][3] += 3*DefaultStepLength;
 
-  std::vector<Eigen::VectorXd> walk = convertRouteToWalk(robot, locations);
+//  locations[1][3] += 3*DefaultStepLength;
+  locations[1][3] += 4*DefaultStepLength;
+//  locations[1][3] += 2.0;
+
+  std::vector<size_t> stepRanges;
+  std::vector<Eigen::VectorXd> walk = convertRouteToWalk(robot, locations, stepRanges);
   std::cout << "waypoints: " << walk.size() << std::endl;
+  std::cout << "Step Ranges: ";
+  for(size_t i=0; i < stepRanges.size(); ++i)
+    std::cout << stepRanges[i] << ", ";
+  std::cout << std::endl;
 
   HuboPath::Operator mOperator;
   std::vector<size_t> opIndices;
@@ -590,35 +604,74 @@ int main()
   }
   mOperator.setJointIndices(indexNames);
 
-  for(size_t i=0; i < walk.size(); ++i)
+  HuboPath::Trajectory trajectory;
+  for(size_t r=0; r < stepRanges.size()+1; ++r)
   {
-    robot->setPositions(walk[i]);
-    mOperator.addWaypoint(robot->getPositions(opIndices));
+    size_t start_i = r==0? 0 : stepRanges[r-1]-1;
+    size_t end_i = r==stepRanges.size()? walk.size() : stepRanges[r];
+    std::cout << "step from " << start_i << " to " << end_i << std::endl;
+
+    mOperator.clearWaypoints();
+    for(size_t i=start_i; i < end_i; ++i)
+    {
+      robot->setPositions(walk[i]);
+      mOperator.addWaypoint(robot->getPositions(opIndices));
+    }
+
+    HuboPath::Trajectory partial_trajectory = mOperator.getCurrentTrajectory();
+
+    if(r > 0)
+      partial_trajectory.elements.erase(partial_trajectory.elements.begin());
+
+    HuboCan::HuboDescription& desc = partial_trajectory.desc;
+    for(size_t i=0; i < desc.getJointCount(); ++i)
+    {
+      hubo_joint_info_t& info = desc.joints[i]->info;
+      hubo_joint_limits_t& limits = info.limits;
+
+      limits.nominal_speed /= 5.0;
+      limits.nominal_accel /= 5.0;
+    }
+
+    std::cout << "Initial size of partial: " << partial_trajectory.elements.size() << std::endl;
+    std::cout << "Interpolating #" << r << "..." << std::endl;
+    if(!partial_trajectory.interpolate(HUBO_PATH_OPTIMAL))
+    {
+      break;
+    }
+    std::cout << "Size of partial: " << partial_trajectory.elements.size() << std::endl;
+
+    if(r==0)
+    {
+      trajectory = partial_trajectory;
+    }
+    else
+    {
+      for(size_t k=0; k < partial_trajectory.size(); ++k)
+        trajectory.elements.push_back(partial_trajectory.elements[k]);
+    }
   }
 
-  mOperator.setInterpolationMode(HUBO_PATH_OPTIMAL);
-  HuboPath::Trajectory trajectory = mOperator.getCurrentTrajectory();
-
-  HuboCan::HuboDescription& desc = trajectory.desc;
-  for(size_t i=0; i < desc.getJointCount(); ++i)
-  {
-    hubo_joint_info_t& info = desc.joints[i]->info;
-    hubo_joint_limits_t& limits = info.limits;
-
-    limits.nominal_speed /= 5.0;
-    limits.nominal_accel /= 5.0;
-  }
-  trajectory.interpolate();
 
   bool operate = true;
   operate = false;
 
   if(operate)
   {
+    if(!trajectory.check_limits())
+    {
+      std::cout << "Not sending walk trajectory, because it violates limits!" << std::endl;
+      return 1;
+    }
+
     mOperator.sendNewTrajectory(trajectory);
   }
   else
   {
+    if(!trajectory.check_limits())
+    {
+      std::cout << "Walk trajectory violates limits!" << std::endl;
+    }
 
     std::vector<Eigen::VectorXd> fullwalk;
 

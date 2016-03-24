@@ -189,7 +189,7 @@ public:
     // Do nothing
   }
 
-  std::unique_ptr<GradientMethod> clone(InverseKinematics* _newIK) const override
+  std::unique_ptr<dart::dynamics::InverseKinematics::GradientMethod> clone(InverseKinematics* _newIK) const override
   {
     return std::unique_ptr<GradientMethod>(new HuboArmIK(_newIK, mBaseLinkName));
   }
@@ -812,6 +812,20 @@ public:
     }
   }
 
+  void resetPositions()
+  {
+    solve = false;
+    for(size_t i=6; i<mHubo->getNumDofs(); ++i)
+    {
+      mHubo->getDof(i)->setPosition(0.0);
+    }
+  }
+
+  void resumeSolving()
+  {
+    solve = true;
+  }
+
 #define ADD_ADJACENT_PAIR( X, Y ) adjacentPairs.push_back(std::pair<std::string,std::string>( "Body_" #X , "Body_" #Y ));
 
   void disableAdjacentPairs(const SkeletonPtr& hubo)
@@ -856,6 +870,7 @@ public:
     mMoveComponents.resize(NUM_MOVE, false);
     mAnyMovement = false;
     mAmplifyMovement = false;
+    mReduceMovement = false;
 
     mPlayTrajectory = false;
     mTrajectoryStep = 0;
@@ -1162,6 +1177,12 @@ public:
         elevationStep *= 2.0;
         rotationalStep *= 2.0;
       }
+      else if(mReduceMovement)
+      {
+        linearStep *= 0.1;
+        elevationStep *= 0.1;
+        rotationalStep *= 0.1;
+      }
 
       if(mMoveComponents[MOVE_W])
         new_tf.translate( linearStep*forward);
@@ -1203,6 +1224,9 @@ public:
   }
 
   bool mAmplifyMovement;
+  bool mReduceMovement;
+
+  bool solve;
 
 protected:
 
@@ -1244,8 +1268,6 @@ protected:
   std::vector<Eigen::VectorXd> mTrajectory;
 
   osg::Timer mTimer;
-
-  bool solve;
 };
 
 class InputHandler : public osgGA::GUIEventHandler
@@ -1316,6 +1338,12 @@ public:
         return true;
       }
 
+      if(ea.getKey() == '\\')
+      {
+        mTeleop->solve = true;
+        return true;
+      }
+
       if( ea.getKey() == osgGA::GUIEventAdapter::KEY_Tab )
       {
         mTeleop->loadWaypoint();
@@ -1324,9 +1352,10 @@ public:
 
       if( ea.getKey() == 'p' )
       {
+        std::cout << "\n --- " << std::endl;
         for(size_t i=0; i < mHubo->getNumDofs(); ++i)
-          std::cout << mHubo->getDof(i)->getName() << ": "
-                    << mHubo->getDof(i)->getPosition() << std::endl;
+          std::cout << mHubo->getDof(i)->getPosition() << "\t";
+        std::cout << "\n --- " << std::endl;
         return true;
       }
 
@@ -1390,8 +1419,18 @@ public:
         return true;
       }
 
+      if( '0' == ea.getKey() )
+      {
+        std::cout << "Resetting positions" << std::endl;
+        mTeleop->resetPositions();
+        return true;
+      }
+
       if(ea.getKey() == osgGA::GUIEventAdapter::KEY_Shift_L)
         mTeleop->mAmplifyMovement = true;
+
+      if(ea.getKey() == osgGA::GUIEventAdapter::KEY_Shift_R)
+        mTeleop->mReduceMovement = true;
 
       switch(ea.getKey())
       {
@@ -1417,6 +1456,8 @@ public:
 
       if(mOptimizationKey == ea.getKey())
       {
+        mTeleop->resumeSolving();
+
         if(mPosture)
           mPosture->enforceIdealPosture = true;
 
@@ -1440,8 +1481,12 @@ public:
         return true;
       }
 
+
       if(ea.getKey() == osgGA::GUIEventAdapter::KEY_Shift_L)
         mTeleop->mAmplifyMovement = false;
+
+      if(ea.getKey() == osgGA::GUIEventAdapter::KEY_Shift_R)
+        mTeleop->mReduceMovement = false;
 
       switch(ea.getKey())
       {
@@ -1831,9 +1876,9 @@ int main()
 
   viewer.addEventHandler(new InputHandler(&viewer, node, hubo, world));
 
-//  double display_elevation = 0.05;
-//  viewer.addAttachment(new osgDart::SupportPolygonVisual(
-//                         hubo, display_elevation));
+  double display_elevation = 0.05;
+  viewer.addAttachment(new osgDart::SupportPolygonVisual(
+                         hubo, display_elevation));
 
   std::cout << viewer.getInstructions() << std::endl;
 

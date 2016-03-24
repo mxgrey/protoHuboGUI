@@ -147,11 +147,22 @@ static void setupEndEffectors(const SkeletonPtr& hubo, bool lockedFeet)
         -angularBounds, angularBounds);
 
 
-  dart::math::SupportGeometry foot_support;
-  foot_support.push_back(Eigen::Vector3d(-0.11,  0.02, 0.0));
-  foot_support.push_back(Eigen::Vector3d(-0.15,  0.02, 0.0));
-  foot_support.push_back(Eigen::Vector3d(-0.15, -0.02, 0.0));
-  foot_support.push_back(Eigen::Vector3d(-0.11, -0.02, 0.0));
+  double y_range = 0.01;
+//  double y_range = 0.005;
+//  double left_y_offset = -0.02;
+  double left_y_offset = -0.01;
+  dart::math::SupportGeometry left_foot_support;
+  left_foot_support.push_back(Eigen::Vector3d(-0.11,  y_range+left_y_offset, 0.0));
+  left_foot_support.push_back(Eigen::Vector3d(-0.15,  y_range+left_y_offset, 0.0));
+  left_foot_support.push_back(Eigen::Vector3d(-0.15, -y_range+left_y_offset, 0.0));
+  left_foot_support.push_back(Eigen::Vector3d(-0.11, -y_range+left_y_offset, 0.0));
+
+//  double right_y_offset = -left_y_offset + 0.005;
+  double right_y_offset = -left_y_offset + 0.01;
+  dart::math::SupportGeometry right_foot_support = left_foot_support;
+  for(size_t i=0; i < right_foot_support.size(); ++i)
+    right_foot_support[i][1] += right_y_offset - left_y_offset;
+
 
   Eigen::Isometry3d tf_foot(Eigen::Isometry3d::Identity());
   double ground_dist = 0.00;
@@ -187,7 +198,7 @@ static void setupEndEffectors(const SkeletonPtr& hubo, bool lockedFeet)
 
   l_foot->getIK()->setGradientMethod<LegIK>("Body_LHY");
 
-  l_foot->getSupport(true)->setGeometry(foot_support);
+  l_foot->getSupport(true)->setGeometry(left_foot_support);
   l_foot->getSupport()->setActive();
 
 
@@ -206,7 +217,7 @@ static void setupEndEffectors(const SkeletonPtr& hubo, bool lockedFeet)
 
   r_foot->getIK()->setGradientMethod<LegIK>("Body_RHY");
 
-  r_foot->getSupport(true)->setGeometry(foot_support);
+  r_foot->getSupport(true)->setGeometry(right_foot_support);
   r_foot->getSupport()->setActive();
 
 
