@@ -223,8 +223,8 @@ std::vector<Eigen::VectorXd> stepForward(
   stance->getSupport()->setActive(true);
   swing->getSupport()->setActive(false);
 
-  const Eigen::Vector3d com = robot->getCOM(stance);
-  setSupport(stance, com);
+  const Eigen::Vector3d com_wrt_stance = robot->getCOM(stance);
+  setSupport(stance, com_wrt_stance);
 
   stance->getIK(true)->getTarget()->setTransform(
         stance->getWorldTransform());
@@ -318,8 +318,8 @@ std::vector<Eigen::VectorXd> stepForward(
 
         Eigen::VectorXd end_q = robot->getPositions();
 
-        robot->getEndEffector("l_foot")->getIK(true)->solve();
-        robot->getEndEffector("r_foot")->getIK(true)->solve();
+        solveSwingFoot(robot, swing, swingStart, axis, posture,
+                       x, 0, theta);
 
         if(finish)
         {
@@ -344,9 +344,9 @@ std::vector<Eigen::VectorXd> stepForward(
         robot->getEndEffector("l_foot")->getIK(true)->solve();
         robot->getEndEffector("r_foot")->getIK(true)->solve();
 
-        Eigen::Vector2d target = robot->getCOM().block<2,1>(0,0);
+        Eigen::Vector2d target = robot->getCOM(stance).block<2,1>(0,0);
         std::cout << "target: " << target.transpose();
-        Eigen::Vector2d com2d = com.block<2,1>(0,0);
+        Eigen::Vector2d com2d = com_wrt_stance.block<2,1>(0,0);
 
         Eigen::Vector3d scooched_com = Eigen::Vector3d::Zero();
         double scale = (t-BeginScooch)/(1-BeginScooch)*MaxScoochFactor;
