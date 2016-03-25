@@ -73,6 +73,8 @@ const size_t DefaultNumSteps = 4;
 const double BeginScooch = 0.8;
 const double MaxScoochFactor = 0.3;
 
+const double EntryAngle = 10.0*M_PI/180.0;
+//const double EntryAngle = 0.0*M_PI/180.0;
 
 
 const double frequency = 200.0;
@@ -199,6 +201,60 @@ void setSupport(EndEffector* stance, Eigen::Vector3d com)
 }
 
 //==============================================================================
+void scoochCOM(const SkeletonPtr& robot,
+               EndEffector* stance,
+               EndEffector* swing,
+               const Eigen::Vector3d& com_wrt_stance,
+               const Eigen::Vector2d& swayOffset,
+               const Eigen::Isometry3d& swingStart,
+               const Eigen::Vector3d& axis,
+               std::shared_ptr<hubo::RelaxedPosture>& posture,
+               const Eigen::Vector2d& x, double z, double theta, double t,
+               bool leftStep,
+               bool finish)
+{
+  Eigen::VectorXd current = robot->getPositions();
+
+  Eigen::VectorXd end_q = robot->getPositions();
+
+  solveSwingFoot(robot, swing, swingStart, axis, posture,
+                 x, z, theta);
+
+  if(finish)
+  {
+    end_q.block<2,1>(3,0) =
+        (stance->getWorldTransform().translation().block<2,1>(0,0)
+        + swing->getWorldTransform().translation().block<2,1>(0,0)) / 2.0;
+    end_q[3] += swayOffset[0];
+  }
+  else
+  {
+    end_q.block<2,1>(3,0) =
+        swing->getWorldTransform().translation().block<2,1>(0,0);
+    end_q[3] += swayOffset[0];
+    end_q[4] += computeSwayY(swayOffset[1], !leftStep);
+  }
+
+  robot->getJoint(0)->setPositions(end_q.block<6,1>(0,0));
+
+  robot->getEndEffector("l_foot")->getIK(true)->solve();
+  robot->getEndEffector("r_foot")->getIK(true)->solve();
+
+  Eigen::Vector2d target = robot->getCOM(stance).block<2,1>(0,0);
+  std::cout << "target: " << target.transpose();
+  Eigen::Vector2d com2d = com_wrt_stance.block<2,1>(0,0);
+
+  Eigen::Vector3d scooched_com = Eigen::Vector3d::Zero();
+  double scale = t*MaxScoochFactor;
+  scooched_com.block<2,1>(0,0) = scale*(target - com2d) + com2d;
+  std::cout << " | " << com2d.transpose() << " -> (" << scale << ") -> " << scooched_com.transpose() << std::endl;
+
+  setSupport(stance, scooched_com);
+
+  robot->setPositions(current);
+}
+
+//==============================================================================
 std::vector<Eigen::VectorXd> stepForward(
     const dart::dynamics::SkeletonPtr& robot,
     double stepDist,
@@ -243,7 +299,7 @@ std::vector<Eigen::VectorXd> stepForward(
 
   Eigen::AngleAxisd aa(swingStart.linear().transpose()*swingGoal.linear());
   const double R = aa.angle();
-  const Eigen::Vector3d axis = aa.axis();
+  Eigen::Vector3d axis = aa.axis();
 
   if(CYCLOID == stepType)
   {
@@ -281,7 +337,7 @@ std::vector<Eigen::VectorXd> stepForward(
       if(!solveSwingFoot(robot, swing, swingStart, axis, posture,
                          x, z, theta))
       {
-        std::cout << " ========== Could not solve swing at index #" << walk.size()+1 << std::endl;
+        std::cout << " ========== 1 Could not solve swing at index #" << walk.size()+1 << std::endl;
       }
 
       walk.push_back(robot->getPositions());
@@ -292,12 +348,13 @@ std::vector<Eigen::VectorXd> stepForward(
       const double t = (double)(i)/(double)(res);
       const Eigen::Vector2d x = v*t;
       const double z = h;
-      const double theta = t*R;
+      const double theta = t*EntryAngle;
+      axis = Eigen::Vector3d::UnitY();
 
       if(!solveSwingFoot(robot, swing, swingStart, axis, posture,
                          x, z, theta))
       {
-        std::cout << " ========== Could not solve swing at index #" << walk.size()+1 << std::endl;
+        std::cout << " ========== 2 Could not solve swing at index #" << walk.size()+1 << std::endl;
       }
 
       walk.push_back(robot->getPositions());
@@ -309,64 +366,50 @@ std::vector<Eigen::VectorXd> stepForward(
       const double t = (double)(i)/(double)(res);
       const Eigen::Vector2d x = v;
       const double z = h*(1-t);
-      const double theta = R;
-
+      const double theta = EntryAngle;
+      axis = Eigen::Vector3d::UnitY();
 
       if(t >= BeginScooch)
       {
-        Eigen::VectorXd current = robot->getPositions();
-
-        Eigen::VectorXd end_q = robot->getPositions();
-
-        solveSwingFoot(robot, swing, swingStart, axis, posture,
-                       x, 0, theta);
-
-        if(finish)
-        {
-          end_q.block<2,1>(3,0) =
-              (stance->getWorldTransform().translation().block<2,1>(0,0)
-              + swing->getWorldTransform().translation().block<2,1>(0,0)) / 2.0;
-          end_q[3] += swayOffset[0];
-        }
-        else
-        {
-          end_q.block<2,1>(3,0) =
-              swing->getWorldTransform().translation().block<2,1>(0,0);
-//              stance->getWorldTransform().translation().block<2,1>(0,0);
-          end_q[3] += swayOffset[0];
-          end_q[4] += computeSwayY(swayOffset[1], !leftStep);
-        }
-
-        robot->getJoint(0)->setPositions(end_q.block<6,1>(0,0));
-//        solveSwingFoot(robot, swing, swingStart, axis, posture,
-//                       x, 0, theta);
-
-        robot->getEndEffector("l_foot")->getIK(true)->solve();
-        robot->getEndEffector("r_foot")->getIK(true)->solve();
-
-        Eigen::Vector2d target = robot->getCOM(stance).block<2,1>(0,0);
-        std::cout << "target: " << target.transpose();
-        Eigen::Vector2d com2d = com_wrt_stance.block<2,1>(0,0);
-
-        Eigen::Vector3d scooched_com = Eigen::Vector3d::Zero();
-        double scale = (t-BeginScooch)/(1-BeginScooch)*MaxScoochFactor;
-        scooched_com.block<2,1>(0,0) = scale*(target - com2d) + com2d;
-        std::cout << " | " << com2d.transpose() << " -> (" << scale << ") -> " << scooched_com.transpose() << std::endl;
-
-
-        setSupport(stance, scooched_com);
-
-        robot->setPositions(current);
+        scoochCOM(robot, stance, swing, com_wrt_stance, swayOffset, swingStart,
+                  axis, posture, x, 0, 0, (t-BeginScooch)/(1-BeginScooch),
+                  leftStep, finish);
       }
-
 
       if(!solveSwingFoot(robot, swing, swingStart, axis, posture,
                          x, z, theta))
       {
-        std::cout << " ========== Could not solve swing at index #" << walk.size()+1 << std::endl;
+        std::cout << " ========== 3 Could not solve swing at index #" << walk.size()+1 << std::endl;
       }
 
       walk.push_back(robot->getPositions());
+    }
+
+    if(EntryAngle != 0.0)
+    {
+      for(size_t i=0; i < res+1; ++i)
+      {
+        const double t = (double)(i)/(double)(res);
+        const Eigen::Vector2d x = v;
+        const double z = 0.0;
+        const double theta = EntryAngle*(1.0-t);
+        axis = Eigen::Vector3d::UnitY();
+
+        if(t >= BeginScooch)
+        {
+          scoochCOM(robot, stance, swing, com_wrt_stance, swayOffset, swingStart,
+                    axis, posture, x, 0, 0, 1.0,
+                    leftStep, finish);
+        }
+
+        if(!solveSwingFoot(robot, swing, swingStart, axis, posture,
+                           x, z, theta))
+        {
+          std::cout << " ========== 4 Could not solve swing at index #" << walk.size()+1 << std::endl;
+        }
+
+        walk.push_back(robot->getPositions());
+      }
     }
   }
 
