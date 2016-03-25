@@ -56,22 +56,22 @@ namespace DrcModel {
 //==============================================================================
 static void setStartupConfiguration(const SkeletonPtr& hubo)
 {
-//  hubo->getDof("LHP")->setPosition(-45.0*M_PI/180.0);
-//  hubo->getDof("LKP")->setPosition( 90.0*M_PI/180.0);
-//  hubo->getDof("LAP")->setPosition(-45.0*M_PI/180.0);
+  hubo->getDof("LHP")->setPosition(-45.0*M_PI/180.0);
+  hubo->getDof("LKP")->setPosition( 90.0*M_PI/180.0);
+  hubo->getDof("LAP")->setPosition(-45.0*M_PI/180.0);
 
-//  hubo->getDof("RHP")->setPosition(-45.0*M_PI/180.0);
-//  hubo->getDof("RKP")->setPosition( 90.0*M_PI/180.0);
-//  hubo->getDof("RAP")->setPosition(-45.0*M_PI/180.0);
+  hubo->getDof("RHP")->setPosition(-45.0*M_PI/180.0);
+  hubo->getDof("RKP")->setPosition( 90.0*M_PI/180.0);
+  hubo->getDof("RAP")->setPosition(-45.0*M_PI/180.0);
 
 
-  hubo->getDof("LHP")->setPosition(-30.0*M_PI/180.0);
-  hubo->getDof("LKP")->setPosition( 60.0*M_PI/180.0);
-  hubo->getDof("LAP")->setPosition(-30.0*M_PI/180.0);
+//  hubo->getDof("LHP")->setPosition(-30.0*M_PI/180.0);
+//  hubo->getDof("LKP")->setPosition( 60.0*M_PI/180.0);
+//  hubo->getDof("LAP")->setPosition(-30.0*M_PI/180.0);
 
-  hubo->getDof("RHP")->setPosition(-30.0*M_PI/180.0);
-  hubo->getDof("RKP")->setPosition( 60.0*M_PI/180.0);
-  hubo->getDof("RAP")->setPosition(-30.0*M_PI/180.0);
+//  hubo->getDof("RHP")->setPosition(-30.0*M_PI/180.0);
+//  hubo->getDof("RKP")->setPosition( 60.0*M_PI/180.0);
+//  hubo->getDof("RAP")->setPosition(-30.0*M_PI/180.0);
 
 
   hubo->getDof("LSP")->setPosition(  30.0*M_PI/180.0);

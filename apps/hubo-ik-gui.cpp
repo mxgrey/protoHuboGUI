@@ -1601,6 +1601,10 @@ void setStartupConfiguration(const SkeletonPtr& hubo)
   hubo->getDof("RKP")->setPosition( 90.0*M_PI/180.0);
   hubo->getDof("RAP")->setPosition(-45.0*M_PI/180.0);
 
+
+
+
+
   hubo->getDof("LSP")->setPosition(  30.0*M_PI/180.0);
   hubo->getDof("LEP")->setPosition(-120.0*M_PI/180.0);
 

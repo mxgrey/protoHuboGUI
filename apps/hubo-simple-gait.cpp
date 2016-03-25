@@ -56,25 +56,28 @@ using Trajectory = std::vector<Eigen::VectorXd>;
 using namespace dart::dynamics;
 using namespace dart::simulation;
 
+//==============================================================================
 const double DefaultStepLength = 0.13;
 const double DefaultStepHeight = 0.06;
 
 //const StepType DefaultStepType = CYCLOID;
 const StepType DefaultStepType = SQUARE;
 
-const double DefaultSwayOffset_X = -0.14 - 0.03939;
+const double DefaultSwayOffset_X = -0.14 - 0.01;
 const double DefaultSwayOffset_Y = 0.0837455;
 
 const double SlowDownFactor = 5.0;
 
-const size_t DefaultNumSteps = 4;
+const size_t DefaultNumSteps = 2 * 3;
 
 
-const double BeginScooch = 0.8;
+const double BeginScooch = 0.65;
+//const double BeginScooch = 2.0;
+
 const double MaxScoochFactor = 0.3;
 
-const double EntryAngle = 10.0*M_PI/180.0;
-//const double EntryAngle = 0.0*M_PI/180.0;
+//const double EntryAngle = 10.0*M_PI/180.0;
+const double EntryAngle = 0.0*M_PI/180.0;
 
 
 const double frequency = 200.0;
@@ -433,6 +436,16 @@ std::vector<std::vector<Eigen::VectorXd>> interpolateSteps(
       break;
   }
 
+  stepForward(robot, stepDist, stepHeight, swayOffset,
+              stepType, false, false);
+
+  std::cout << " ------\n";
+  for(size_t i=0; i < robot->getNumDofs(); ++i)
+  {
+    std::cout << robot->getDof(i)->getPosition() << "\t";
+  }
+  std::cout << "\n -----" << std::endl;
+
   std::vector<std::vector<Eigen::VectorXd>> walk;
   for(size_t i=0; i < numSteps; ++i)
   {
@@ -444,8 +457,10 @@ std::vector<std::vector<Eigen::VectorXd>> interpolateSteps(
 
     problem->addEqConstraint(balance);
 //    std::cout << "Forward" << std::endl;
+//    walk.push_back(stepForward(robot, stepDist, stepHeight, swayOffset,
+//                               stepType, i%2==0, i==numSteps-1));
     walk.push_back(stepForward(robot, stepDist, stepHeight, swayOffset,
-                               stepType, i%2==0, i==numSteps-1));
+                               stepType, i%2==0, false));
   }
 
   problem->removeEqConstraint(balance);
@@ -639,7 +654,7 @@ int main()
 
 
   bool operate = true;
-  operate = false;
+//  operate = false;
 
   if(operate)
   {
